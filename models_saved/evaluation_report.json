@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-02-03T12:53:46.176001",
+  "model_info": {
+    "timestamp": "2026-02-02T20:04:17.079369",
+    "config": {
+      "ticker": "^GSPC",
+      "start_date": "2015-01-01",
+      "end_date": "2024-12-31",
+      "hidden_dim": 128,
+      "num_layers": 2,
+      "learning_rate": 0.0001,
+      "batch_size": 32,
+      "num_epochs": 100
+    },
+    "metrics": {
+      "mse": 14206954.0,
+      "rmse": 3769.21142578125,
+      "mae": 3735.1103515625,
+      "directional_accuracy": 52.92841648590022,
+      "r_squared": -83459439.0,
+      "alpha_mean": 0.46531710028648376,
+      "alpha_std": 0.00010572661994956434
+    },
+    "best_epoch": 25,
+    "total_epochs": 40
+  },
+  "evaluation_metrics": {
+    "mse": 1.4882865761884465,
+    "rmse": 1.219953513945694,
+    "mae": 0.9636941451645158,
+    "r2": -0.39093395836774536,
+    "directional_accuracy": 32.83582089552239
+  },
+  "trading_performance": {
+    "cumulative_return": 2.661631509197407e+39,
+    "sharpe_ratio": -1.17147442020373,
+    "max_drawdown": -1523.1949024072308,
+    "win_rate": 51.7948717948718
+  }
+}
