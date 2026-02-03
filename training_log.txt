@@ -1,0 +1,11 @@
+﻿timeout : ERROR: Invalid syntax. Default option is not allowed 
+more than '1' time(s).
+At line:1 char:1
++ timeout 120 python train_model.py 2>&1 | Out-File -Encoding 
+utf8 "tra ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ERROR: Invalid .. 
+   .an '1' time(s).:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Type "TIMEOUT /?" for usage.
