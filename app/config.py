@@ -6,7 +6,7 @@ for reproducible experimentation and production deployment.
 """
 
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 import torch
 import numpy as np
 import random
@@ -15,25 +15,19 @@ import random
 class Config:
     """
     Global configuration class with strict type hints.
-    
-    Attributes:
-        SEED: Random seed for reproducibility across PyTorch, NumPy, and Python random.
-        DEVICE: Computation device (CUDA if available, else CPU).
-        DATA_DIR: Root directory for storing raw and processed data.
-        MODEL_DIR: Directory for saving trained model checkpoints.
     """
-    
+
     # ============================================================
     # REPRODUCIBILITY
     # ============================================================
     SEED: int = 42
-    
+
     # ============================================================
     # COMPUTE RESOURCES
     # ============================================================
     DEVICE: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    NUM_WORKERS: int = 4
-    
+    NUM_WORKERS: int = 0  # 0 for Windows compatibility
+
     # ============================================================
     # PATHS
     # ============================================================
@@ -41,77 +35,100 @@ class Config:
     DATA_DIR: Path = PROJECT_ROOT / "data"
     MODEL_DIR: Path = PROJECT_ROOT / "models_saved"
     LOGS_DIR: Path = PROJECT_ROOT / "logs"
-    
+
     # ============================================================
     # DATA CONFIGURATION
     # ============================================================
-    TICKER: str = "^GSPC"  # S&P 500 Index (Change to "BTC-USD" for Bitcoin)
-    START_DATE: str = "2015-01-01"
+    TICKER: str = "^GSPC"
+    START_DATE: str = "2010-01-01"   # Extended to 14 years for richer training
     END_DATE: str = "2024-12-31"
-    NEWS_API_KEY: str = "YOUR_NEWS_API_KEY_HERE"  # Replace with actual key
-    
+    NEWS_API_KEY: str = "YOUR_NEWS_API_KEY_HERE"
+
+    # ============================================================
+    # MACRO DATA (free via yfinance)
+    # ============================================================
+    MACRO_TICKERS: Dict[str, str] = {
+        "VIX":  "^VIX",        # CBOE Volatility Index
+        "TNX":  "^TNX",        # 10-Year Treasury Yield
+        "FVX":  "^FVX",        # 5-Year Treasury Yield
+        "IRX":  "^IRX",        # 13-Week T-Bill
+        "DXY":  "DX-Y.NYB",   # US Dollar Index
+        "GLD":  "GLD",         # Gold ETF (risk-off proxy)
+        "TLT":  "TLT",         # 20+ Year Treasury ETF
+    }
+
     # ============================================================
     # ECONOMETRIC PARAMETERS (ARDL)
     # ============================================================
-    ARDL_LAGS: int = 5  # Autoregressive lags
-    ARDL_MAX_DIFF_ORDER: int = 2  # Maximum differencing order for stationarity
-    ADF_PVALUE_THRESHOLD: float = 0.05  # Significance level for ADF test
-    
+    ARDL_LAGS: int = 5
+    ARDL_WINDOW: int = 120          # Rolling window for ARDL fitting (trading days)
+    ARDL_MAX_DIFF_ORDER: int = 2
+    ADF_PVALUE_THRESHOLD: float = 0.05
+
     # ============================================================
     # NEURAL NETWORK ARCHITECTURE
     # ============================================================
-    HIDDEN_DIM: int = 128  # LSTM hidden dimension
-    NUM_LAYERS: int = 2  # Number of LSTM layers
-    NHEAD: int = 8  # Number of attention heads in Transformer
-    DROPOUT: float = 0.3  # Dropout rate for regularization
-    SEQ_LENGTH: int = 60  # Lookback window (e.g., 60 days)
-    
+    HIDDEN_DIM: int = 128
+    NUM_LAYERS: int = 2
+    NHEAD: int = 8
+    DROPOUT: float = 0.2            # Reduced from 0.3 for better gradient flow
+    SEQ_LENGTH: int = 60
+    TRANSFORMER_LAYERS: int = 2     # Stack two transformer blocks
+
     # ============================================================
     # FUSION NETWORK PARAMETERS
     # ============================================================
-    FUSION_HIDDEN_DIM: int = 64  # Hidden dimension for gating mechanism
-    ALPHA_INIT: float = 0.5  # Initial weight for neural vs econometric blend
-    
+    FUSION_HIDDEN_DIM: int = 64
+    ALPHA_INIT: float = 0.5
+
     # ============================================================
     # TRAINING HYPERPARAMETERS
     # ============================================================
-    BATCH_SIZE: int = 32
-    LEARNING_RATE: float = 1e-4
-    NUM_EPOCHS: int = 100
+    BATCH_SIZE: int = 64
+    LEARNING_RATE: float = 1e-4     # Stable LR for complex hybrid model
+    NUM_EPOCHS: int = 80
     EARLY_STOP_PATIENCE: int = 15
-    WEIGHT_DECAY: float = 1e-5  # L2 regularization
-    
+    WEIGHT_DECAY: float = 1e-4
+    GRAD_CLIP_NORM: float = 0.5     # Tighter clip for stability
+
+    # Loss weights
+    LAMBDA_MSE: float = 1.0
+    LAMBDA_DIRECTIONAL: float = 2.5  # Strong directional signal
+    LAMBDA_AGREEMENT: float = 0.15
+    LAMBDA_REG: float = 0.05
+
     # ============================================================
     # BACKTESTING PARAMETERS
     # ============================================================
-    TRAIN_WINDOW_SIZE: int = 252 * 3  # 3 years of trading days
-    TEST_WINDOW_SIZE: int = 21  # 1 month ahead prediction
-    WALK_FORWARD_STEP: int = 21  # Re-train every month
-    
+    TRAIN_WINDOW_SIZE: int = 252 * 3
+    TEST_WINDOW_SIZE: int = 21
+    WALK_FORWARD_STEP: int = 21
+    TRANSACTION_COST_BPS: float = 10.0  # 10 bps one-way (institutional median)
+
     # ============================================================
     # SENTIMENT ANALYSIS
     # ============================================================
     FINBERT_MODEL: str = "ProsusAI/finbert"
     SENTIMENT_BATCH_SIZE: int = 16
-    MAX_NEWS_PER_DAY: int = 10  # Max headlines to aggregate per day
-    
+    MAX_NEWS_PER_DAY: int = 10
+
     # ============================================================
     # TECHNICAL INDICATORS
     # ============================================================
     TECHNICAL_INDICATORS: Dict[str, Any] = {
-        "RSI": {"period": 14},
-        "MACD": {"fast": 12, "slow": 26, "signal": 9},
+        "RSI":    {"period": 14},
+        "MACD":   {"fast": 12, "slow": 26, "signal": 9},
         "BBANDS": {"period": 20, "std": 2},
-        "ATR": {"period": 14},
-        "ADX": {"period": 14}
+        "ATR":    {"period": 14},
+        "ADX":    {"period": 14},
     }
-    
+
     # ============================================================
     # API CONFIGURATION
     # ============================================================
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
-    API_RELOAD: bool = False  # Set to False in production
+    API_RELOAD: bool = False
     
     @classmethod
     def set_seed(cls) -> None:

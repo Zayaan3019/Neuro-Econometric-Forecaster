@@ -614,7 +614,7 @@ class Preprocessor:
                 df_processed[f'{target_col}_diff'] = stationary_target
         
         # Step 3: Handle missing values
-        df_processed = df_processed.fillna(method='ffill').fillna(method='bfill')
+        df_processed = df_processed.ffill().bfill()
         
         # Step 4: Normalization
         numeric_cols = df_processed.select_dtypes(include=[np.number]).columns.tolist()
@@ -648,9 +648,107 @@ class Preprocessor:
             raise ValueError("Preprocessor not fitted. Call fit_transform() first.")
         
         df_processed = TechnicalIndicatorEngine.compute_all(df)
-        df_processed = df_processed.fillna(method='ffill').fillna(method='bfill')
+        df_processed = df_processed.ffill().bfill()
         
         # Apply same normalization
         df_processed[self.feature_names] = self.scaler.transform(df_processed[self.feature_names])
         
         return df_processed
+    
+    def inverse_transform_predictions(
+        self,
+        predictions: np.ndarray,
+        target_col: str = 'Close',
+        last_actual_value: Optional[float] = None
+    ) -> np.ndarray:
+        """
+        Convert normalized/differenced predictions back to original scale.
+        
+        Args:
+            predictions: Model predictions (normalized/differenced).
+            target_col: Name of target column.
+            last_actual_value: Last known actual value for inverse differencing.
+        
+        Returns:
+            Predictions in original price scale.
+        
+        CRITICAL FIX: Ensures predictions are interpretable and can be backtested.
+        """
+        if self.scaler is None:
+            raise ValueError("Preprocessor not fitted.")
+        
+        # Step 1: Inverse normalize
+        # Create dummy DataFrame with all features (scaler expects all columns)
+        if len(predictions.shape) == 1:
+            predictions = predictions.reshape(-1, 1)
+        
+        # Find target column index in feature_names
+        if target_col in self.feature_names:
+            target_idx = self.feature_names.index(target_col)
+        elif f'{target_col}_diff' in self.feature_names:
+            target_idx = self.feature_names.index(f'{target_col}_diff')
+        else:
+            logger.warning(f"Target column {target_col} not in feature_names. Using first column.")
+            target_idx = 0
+        
+        # Create array with zeros for other features
+        n_features = len(self.feature_names)
+        full_array = np.zeros((len(predictions), n_features))
+        full_array[:, target_idx] = predictions.flatten()
+        
+        # Inverse transform
+        denormalized = self.scaler.inverse_transform(full_array)
+        predictions_denorm = denormalized[:, target_idx]
+        
+        # Step 2: Inverse difference if needed
+        if self.diff_transformer.diff_order > 0:
+            if last_actual_value is None:
+                logger.warning("No last_actual_value provided for inverse differencing. Using 0.")
+                last_actual_value = 0.0
+            
+            predictions_original = self.diff_transformer.inverse_transform(
+                pd.Series(predictions_denorm),
+                original_level=last_actual_value
+            ).values
+            
+            return predictions_original
+        else:
+            return predictions_denorm
+    
+    def create_returns_target(
+        self,
+        df: pd.DataFrame,
+        target_col: str = 'Close',
+        horizon: int = 1
+    ) -> pd.Series:
+        """
+        Create returns-based target variable (CRITICAL FIX).
+        
+        Args:
+            df: DataFrame with price data.
+            target_col: Column to compute returns from.
+            horizon: Forecasting horizon (1 = next day).
+        
+        Returns:
+            Series of returns.
+        
+        MATHEMATICAL FOUNDATION:
+            return_t = (price_{t+horizon} - price_t) / price_t
+            
+            This is what we should be predicting, NOT absolute prices.
+        """
+        if target_col not in df.columns:
+            raise ValueError(f"Target column {target_col} not in DataFrame.")
+        
+        prices = df[target_col]
+        
+        # Compute returns
+        returns = prices.pct_change(periods=horizon).shift(-horizon)
+        
+        logger.info(f"Created returns target with horizon={horizon}")
+        logger.info(f"  Mean return: {returns.mean():.6f}")
+        logger.info(f"  Std return: {returns.std():.6f}")
+        logger.info(f"  Min return: {returns.min():.6f}")
+        logger.info(f"  Max return: {returns.max():.6f}")
+        
+        return returns

@@ -1,354 +1,182 @@
-# 🚀 Neuro-Econometric Market Alpha Engine
+# Neuro-Econometric Market Alpha Engine
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+A hybrid forecasting research harness that fuses econometrics (ARDL / bounds-testing, AR baselines) with deep learning (causally-masked Transformer + LSTM) behind a learned gating mechanism, evaluated under a genuine walk-forward protocol with calibration checking, drift monitoring, and significance testing throughout.
 
-## 📋 Overview
-
-A **production-grade hybrid forecasting system** that fuses traditional econometrics (ARDL) with deep learning (Transformers + LSTMs) to generate alpha signals for financial markets. This system processes **multi-modal data** (price action + financial news sentiment) and dynamically blends linear and non-linear predictions based on market volatility regimes.
-
-### 🎯 Core Innovation
-
-```
-┌────────────────────────────────────────────────────┐
-│              HYBRID ARCHITECTURE                    │
-├────────────────┬───────────────────────────────────┤
-│  ARDL Branch   │    Neural Branch                  │
-│  (Linear)      │    (Non-Linear)                   │
-│  ✓ Long-term   │    ✓ Transformers                 │
-│    equilibrium │    ✓ LSTMs                        │
-│  ✓ Stationarity│    ✓ Multi-head attention         │
-└────────┬───────┴──────┬────────────────────────────┘
-         │              │
-         └──────┬───────┘
-                │
-    ┌───────────▼───────────┐
-    │  Gated Fusion Network │
-    │  α = f(Volatility,    │
-    │        Sentiment,      │
-    │        Market State)   │
-    └───────────┬───────────┘
-                │
-         ┌──────▼──────┐
-         │ Alpha Signal│
-         │ (Buy/Sell)  │
-         └─────────────┘
-```
-
-### 🌟 Key Features
-
-- **Zero Look-Ahead Bias**: Strict walk-forward validation
-- **Multi-Modal Learning**: Price + Sentiment (FinBERT)
-- **Adaptive Gating**: Trust neural network in chaos, ARDL in stability
-- **Production-Ready**: FastAPI endpoints for real-time inference
-- **Comprehensive Metrics**: Sharpe, Sortino, Max Drawdown, Win Rate
+**This README makes no performance claim that isn't backed by a number in [`MODEL_EVALUATION_REPORT.md`](MODEL_EVALUATION_REPORT.md), which is reproducible end-to-end by rerunning `python walk_forward_pipeline.py`.** The honest headline: on real S&P 500 data under rolling walk-forward evaluation, the hybrid model shows **no statistically significant directional edge** (48.21% accuracy, N=1394, p=0.19 vs. a 50% null) and is **significantly less accurate** (Diebold-Mariano p<0.0001) than a simple AR(p) baseline. That negative result, and how it was reached, is the actual deliverable here — see the report for the full picture, including the one component that *does* show a modest, significant edge.
 
 ---
 
-## 🏗️ Architecture
+## What this project actually demonstrates
 
-### 1. **Econometric Branch (ARDL)**
-- **Purpose**: Capture long-term equilibrium relationships
-- **Method**: Autoregressive Distributed Lag models
-- **Features**: Automatic stationarity checking (ADF/KPSS tests)
-- **Fallback**: Simple AR model if ARDL fails to converge
+Not "68.7% directional accuracy" (an earlier version of this README claimed that; no artifact anywhere in the repo ever produced it — see [Audit trail](#audit-trail-what-was-wrong-and-what-was-fixed)). What it does demonstrate, all independently verified and unit-tested:
 
-**Mathematical Foundation:**
-```
-Y_t = c + Σ(φ_i * Y_{t-i}) + Σ(β_j * X_{t-j}) + ε_t
-```
-
-### 2. **Neural Branch (Transformer + LSTM)**
-- **Transformer**: Captures global temporal patterns via multi-head attention
-- **LSTM**: Refines sequential dependencies
-- **Input**: Technical indicators (RSI, MACD, ATR, etc.) + Sentiment scores
-- **Output**: High-dimensional market state representation
-
-**Architecture:**
-```
-Input → Projection → Positional Encoding → Transformer → LSTM → Prediction
-```
-
-### 3. **Fusion Network (Gated Mechanism)**
-- **Gating Function**: `α = σ(W · [State, Volatility, Sentiment])`
-- **Final Prediction**: `Y = α · Y_neural + (1 - α) · Y_ardl`
-- **Adaptive Weighting**: Learned from data, not hand-crafted
-
-**Intuition:**
-- High volatility + extreme sentiment → α ≈ 1 (trust neural)
-- Low volatility + neutral sentiment → α ≈ 0 (trust ARDL)
+- **A causally-correct HMM regime detector.** Forward-filtered posteriors only (`P(state_t | obs_1..t)`) — never Viterbi decoding or forward-backward smoothing, both of which leak future information into a "what regime were we in at time t" feature. Proven, not assumed: `tests/test_regime.py` perturbs future observations and asserts the filtered posterior for the past is bit-for-bit unchanged.
+- **A genuine Pesaran-Shin-Smith ARDL bounds test**, with AIC/BIC-selected lag order (not a fixed constant) and real asymptotic critical values, replacing a placeholder that previously always returned `(False, 0.0, "requires manual interpretation")` without running anything.
+- **MC-Dropout uncertainty that is actually calibration-checked**, not assumed calibrated. On this model, it isn't (nominal 90% intervals cover ~11% of outcomes) — that's reported directly rather than hidden.
+- **Population Stability Index drift monitoring** on input features with an explicitly justified bucket count and alert threshold (see `app/monitoring/psi.py` docstring), not a copied "0.2" convention.
+- **A true rolling walk-forward evaluation**: 5 expanding-window folds, the model retrained from scratch each fold, evaluated only on the immediately following unseen block. Zero train/test index overlap, verified by `tests/test_walk_forward_boundaries.py`.
+- **A Diebold-Mariano significance test** comparing the hybrid model against an ARIMA baseline and a persistence baseline on identical scored timestamps — not just eyeballed RMSE.
 
 ---
 
-## 📂 Project Structure
+## Architecture
 
 ```
-Market_Alpha_Engine/
-├── app/
-│   ├── config.py                # Global configuration & hyperparameters
-│   ├── data/
-│   │   ├── loader.py            # OHLCV (yfinance) + News (NewsAPI)
-│   │   ├── preprocessor.py      # ADF tests, differencing, normalization
-│   │   └── sentiment.py         # FinBERT sentiment analysis
-│   ├── models/
-│   │   ├── econometrics.py      # ARDL implementation
-│   │   ├── neural.py            # Transformer + LSTM encoders
-│   │   └── fusion.py            # Gated fusion network
-│   ├── engine/
-│   │   ├── trainer.py           # Custom training loop
-│   │   └── backtester.py        # Walk-forward validation
-│   └── api/
-│       └── routes.py            # FastAPI endpoints
-├── tests/                       # Pytest suite
-├── requirements.txt
-└── README.md
+                    ┌─────────────────────────────┐
+   Price/Volume ───▶│  Technical indicators (RSI,  │
+   Macro (VIX,      │  MACD, ATR, ADX, BBands...)  │
+   yields, DXY,      │  + multi-timeframe returns/   │──┐
+   Gold, TLT)        │  volatility + calendar feats  │  │
+                    └─────────────────────────────┘  │
+                                                        ▼
+                    ┌──────────────────────────────────────────┐
+                    │  Causal HMM regime detector                │
+                    │  (forward-filtered P(high-vol) as feature) │
+                    └──────────────────┬───────────────────────┘
+                                        ▼
+        ┌───────────────────────────────────────────────────────┐
+        │            NeuroEconometricNet                          │
+        │  ┌─────────────────────┐      ┌──────────────────────┐ │
+        │  │   Neural branch      │      │   Econometric branch  │ │
+        │  │  causal-masked        │      │  rolling AutoReg(p)   │ │
+        │  │  Transformer → LSTM   │      │  (1-step return fcst) │ │
+        │  │  → latent state h     │      │                        │ │
+        │  └──────────┬───────────┘      └───────────┬───────────┘ │
+        │             │                                │            │
+        │             ▼                                │            │
+        │  ┌──────────────────────────┐                │            │
+        │  │ Gated fusion: α = σ(W·[h,  │                │            │
+        │  │  vol_regime, sentiment])   │                │            │
+        │  │ ŷ = α·y_neural + (1-α)·y_ardl               │            │
+        │  └──────────────────────────┘◀───────────────┘            │
+        └───────────────────────────────────────────────────────────┘
+                                        ▼
+                          predicted 1-day-ahead return
 ```
+
+**Key files:**
+
+| File | Role |
+|---|---|
+| `app/models/neural.py` | Causal-masked Transformer + LSTM encoder (`HybridNeuralEncoder`), volatility-regime MLP |
+| `app/models/fusion.py` | `NeuroEconometricNet` — the full hybrid model with gated fusion (`GatedFusionMechanism`) |
+| `app/models/econometrics.py` | ARDL model with AIC/BIC lag selection, real Pesaran bounds test, Engle-Granger cointegration |
+| `app/models/regime.py` | Causal HMM regime detector — forward-filtered posteriors only |
+| `app/data/loader.py`, `app/data/preprocessor.py` | OHLCV/macro loading, technical indicators, stationarity testing |
+| `app/engine/uncertainty.py` | MC-Dropout sampling + PIT histogram + reliability-diagram calibration checking |
+| `app/engine/statistical_tests.py` | Diebold-Mariano test |
+| `app/engine/baselines.py` | Persistence + rolling ARIMA baselines |
+| `app/monitoring/psi.py` | Population Stability Index drift monitoring |
+| `run_pipeline.py` | Single 70/15/15 chronological-split training run (fast baseline, no leakage) |
+| `walk_forward_pipeline.py` | **The real evaluation**: 5-fold rolling walk-forward, retrains per fold, all baselines + DM test + PSI + calibration per fold |
+| `serve_api.py` | FastAPI inference service (real-time 1-day-ahead prediction) |
+| `tests/` | pytest suite — causality, correctness, and regression tests (see [Testing](#testing)) |
 
 ---
 
-## 🛠️ Installation
+## Installation
 
-### Prerequisites
-- Python 3.11+
-- CUDA 11.8+ (for GPU acceleration, optional)
-- TA-Lib binary library
-
-### Step 1: Clone Repository
 ```bash
-git clone https://github.com/yourusername/Market_Alpha_Engine.git
-cd Market_Alpha_Engine
-```
-
-### Step 2: Install TA-Lib
-**Windows:**
-```bash
-# Download wheel from https://www.lfd.uci.edu/~gohlke/pythonlibs/#ta-lib
-pip install TA_Lib-0.4.27-cp311-cp311-win_amd64.whl
-```
-
-**Linux:**
-```bash
-sudo apt-get update
-sudo apt-get install ta-lib
-```
-
-**macOS:**
-```bash
-brew install ta-lib
-```
-
-### Step 3: Install Python Dependencies
-```bash
+git clone https://github.com/Zayaan3019/Neuro-Econometric-Forecaster.git
+cd Neuro-Econometric-Forecaster
 pip install -r requirements.txt
 ```
 
-### Step 4: Configure API Keys
-Edit `app/config.py`:
-```python
-NEWS_API_KEY = "your_newsapi_key_here"  # Get from https://newsapi.org/
-```
+TA-Lib is optional — `app/data/preprocessor.py` falls back to pure-Python technical indicator implementations if the `talib` binary isn't installed (this is what CI/Docker actually run on).
+
+**Data:** `data/GSPC_ohlcv.csv` contains real S&P 500 OHLCV (2010-01-04 → 2024-12-31), fetched directly from Yahoo Finance's public chart API — the `yfinance` *library* is IP-rate-limited in some sandboxed/cloud environments, but the underlying `query1.finance.yahoo.com` endpoint is not; `app/data/loader.py`'s `OHLCVLoader` will attempt a live `yfinance` fetch first and fall back to this local CSV. Macro series (VIX, yields, DXY, GLD, TLT) are similarly cached in `data/macro_cache/`. `data/GSPC_ohlcv_SYNTHETIC_backup.csv` is preserved for reference — it's the **synthetic**, geometric-Brownian-motion data (`generate_sample_data.py`) this project used to train and evaluate on before this audit; it is no longer used anywhere in the pipeline.
 
 ---
 
-## 🚦 Quick Start
+## Usage
 
-### 1. Data Preparation
-```python
-from app.data.loader import DataLoader
-from app.data.preprocessor import Preprocessor
-
-# Load data
-loader = DataLoader(ticker="^GSPC")
-ohlcv_df, news_df = loader.load_all(
-    start_date="2020-01-01",
-    end_date="2024-12-31"
-)
-
-# Preprocess
-preprocessor = Preprocessor()
-processed_df, metadata = preprocessor.fit_transform(ohlcv_df)
-```
-
-### 2. Train Model
-```python
-from app.models.fusion import NeuroEconometricNet
-from app.engine.trainer import Trainer
-from torch.utils.data import DataLoader
-
-# Initialize model
-model = NeuroEconometricNet(
-    input_dim=50,  # Adjust based on features
-    hidden_dim=128
-)
-
-# Train
-trainer = Trainer(model)
-history = trainer.fit(train_loader, val_loader, num_epochs=100)
-```
-
-### 3. Backtest
-```python
-from app.engine.backtester import WalkForwardBacktester
-
-# Initialize backtester
-backtester = WalkForwardBacktester(
-    train_window_size=252*3,  # 3 years
-    test_window_size=21,      # 1 month
-    step_size=21              # Re-train monthly
-)
-
-# Run backtest
-results_df, metrics = backtester.backtest(data, model)
-backtester.print_metrics(metrics)
-```
-
-### 4. API Inference
+### Train + evaluate (fast, single split)
 ```bash
-# Start API server
-python app/api/routes.py
-
-# Or with uvicorn
-uvicorn app.api.routes:app --host 0.0.0.0 --port 8000
+python run_pipeline.py
 ```
+Trains once on a 70/15/15 chronological split (scaler fit on train only), prints a validation + test report, saves `models_saved/best_model_v2.pt` and `models_saved/evaluation_report_v2.json`.
 
-**Test Prediction:**
+### Train + evaluate (the real evaluation: rolling walk-forward)
 ```bash
-curl -X POST "http://localhost:8000/predict" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "ticker": "^GSPC",
-    "lookback_days": 60,
-    "include_news": true
-  }'
+python walk_forward_pipeline.py
 ```
+~40-90 minutes on CPU (5 folds, retrained from scratch each fold). Produces `models_saved/walk_forward_report.json` — the source of every number in `MODEL_EVALUATION_REPORT.md`.
 
----
-
-## 📊 Performance Metrics
-
-Example backtest results on S&P 500 (2015-2024):
-
-| Metric | Value |
-|--------|-------|
-| **Annualized Return** | 18.3% |
-| **Sharpe Ratio** | 1.87 |
-| **Sortino Ratio** | 2.34 |
-| **Max Drawdown** | -12.4% |
-| **Win Rate** | 64.2% |
-| **Directional Accuracy** | 68.7% |
-
-*Note: Past performance does not guarantee future results.*
-
----
-
-## 🧪 Testing
-
-Run the test suite:
+### Serve predictions
 ```bash
-pytest tests/ -v --cov=app
+python serve_api.py
+# or: docker-compose up -d
+```
+```bash
+curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{"ticker": "^GSPC", "horizon": 1}'
+```
+Requires `models_saved/best_model_v2.pt` to exist (run `run_pipeline.py` first). The `/predict` response includes an explicit disclaimer linking to the evaluation report — this is a reference implementation of a serving pipeline, not a trading-signal product.
+
+### Testing
+```bash
+pytest tests/ test_market_conditions.py -v
 ```
 
 ---
 
-## 📈 Technical Indicators Computed
+## Testing
 
-- **Momentum**: RSI, MOM, ROC
-- **Trend**: MACD, ADX
-- **Volatility**: Bollinger Bands, ATR
-- **Volume**: OBV (On-Balance Volume)
+58 pytest tests across 7 files, all currently passing (`pytest tests/ test_market_conditions.py -q` → `58 passed`):
 
----
+| File | Covers |
+|---|---|
+| `tests/test_models.py` | Model architecture shapes/forward-passes, ARDL fitting + lag selection, the real bounds test, preprocessing |
+| `tests/test_regime.py` | **Causality** of the HMM regime detector — filtered ≠ smoothed, future-perturbation invariance |
+| `tests/test_psi.py` | PSI correctness against known synthetic distribution shifts |
+| `tests/test_statistical_tests.py` | Diebold-Mariano test correctly identifies which of two forecasts is more accurate |
+| `tests/test_uncertainty.py` | MC-Dropout sampling behavior, coverage/PIT computation correctness on synthetic well- and mis-calibrated cases |
+| `tests/test_walk_forward_boundaries.py` | No train/test index overlap or gaps across any fold, anywhere |
+| `tests/test_regression_phase1_bug.py` | Locks in the fix for the original train/eval target-mismatch bug so it can't silently regress |
+| `test_market_conditions.py` | Real 2024-quarter-by-quarter evaluation on the current model/checkpoint |
 
-## 🔬 Key Mathematical Components
-
-### Stationarity Test (ADF)
-```
-ΔY_t = α + βt + γY_{t-1} + Σ(δ_i ΔY_{t-i}) + ε_t
-H0: γ = 0 (unit root exists, non-stationary)
-```
-
-### Gating Mechanism
-```
-α_t = σ(W · [h_t, vol_t, sent_t] + b)
-Ŷ_t = α_t · Y_neural,t + (1 - α_t) · Y_ardl,t
-```
-
-### Loss Function
-```
-L = λ₁·MSE + λ₂·Directional_Loss + λ₃·ARDL_Agreement + λ₄·Regularization
-```
+`test_model_robustness.py` is a legacy diagnostic script (prediction consistency / noise robustness / alpha-gating checks) whose checkpoint loading was fixed to the current format but which has not been fully migrated to the current returns-based methodology or converted into pytest tests — treat it as informational, not part of the verified suite above.
 
 ---
 
-## 🛡️ Risk Disclaimer
+## Known limitations (stated, not hidden)
 
-**THIS SOFTWARE IS FOR EDUCATIONAL AND RESEARCH PURPOSES ONLY.**
-
-- **Not Financial Advice**: This system is not a substitute for professional financial advice
-- **No Guarantees**: Past performance does not indicate future results
-- **Risk of Loss**: Trading involves substantial risk of loss
-- **Use at Your Own Risk**: The authors assume no liability for financial losses
-
-**Always consult with a licensed financial advisor before making investment decisions.**
+- **No statistically significant directional edge** for the hybrid model on daily S&P 500 returns (see headline result above). Do not use this for live trading signal generation.
+- **MC-Dropout uncertainty on this model is not calibrated** (empirical coverage far below nominal) — don't present its intervals as real confidence bounds.
+- **ARDL long-run coefficient significance is weak** even where the joint bounds-test F-statistic rejects H0 — read as suggestive, not precise.
+- **`OBV` (On-Balance Volume) shows large PSI drift in every walk-forward fold** as an artifact of being an unbounded cumulative series, not a real signal change — a candidate for differencing or removal.
+- Only 1-day-ahead prediction is supported end-to-end; the serving API rejects other horizons.
+- Sentiment (FinBERT) scaffolding exists (`app/data/sentiment.py`) but isn't wired into the trained pipeline — `sentiment_score` is a constant 0.0 placeholder throughout.
 
 ---
 
-## 📚 References
+## Audit trail: what was wrong, and what was fixed
 
-### Academic Papers
-1. Pesaran et al. (2001). "Bounds testing approaches to the analysis of level relationships." *Journal of Applied Econometrics*.
+This repository was audited end-to-end (see conversation record / `verify_phase1_result.py` for the reproduction steps). Summary of what was found and fixed — full detail in `MODEL_EVALUATION_REPORT.md`:
+
+1. **The original "32.84% directional accuracy" was not a real measurement of model quality.** Root cause: the legacy evaluation script compared a model trained to predict a normalized *price level* against ground truth read from a *differenced* series — two different statistical objects. Independently, the legacy checkpoint is architecturally incompatible with the current model code and cannot even be loaded anymore (`RuntimeError` on `load_state_dict`).
+2. **Training data was synthetic**, not real market data (`generate_sample_data.py`, a GBM simulator) — despite being loaded ahead of any live API call for every experiment previously run in this repo. Replaced with real Yahoo Finance data.
+3. **Look-ahead leakage** in feature normalization (scaler fit on the full pre-split dataset in one training script) — fixed by fitting strictly on each split's training window.
+4. **A non-causal "directional accuracy" loss term** (`sign(value - batch_mean)` instead of a true sign-of-return) in the legacy training loop — the current loss (`ProductionLoss` in `run_pipeline.py`) uses IC/sign-of-return directly.
+5. **A placeholder ARDL bounds test** that always returned a hardcoded "not implemented" result — replaced with a real Pesaran-Shin-Smith test.
+6. **A broken serving API** (loaded the incompatible legacy checkpoint, called the model as if it returned one tensor instead of a 3-tuple) — fixed and verified end-to-end.
+7. **Multiple documents with fabricated, unreproduced performance numbers** (68.7% accuracy / 1.87 Sharpe in the old README; 52.93% in a since-removed `PROJECT_COMPLETION.md`; "32.84% → 65-75%" in a since-removed `FIX_SUMMARY.md`) — removed. Every number in this README and in `MODEL_EVALUATION_REPORT.md` is reproducible by rerunning `walk_forward_pipeline.py`.
+
+---
+
+## References
+
+1. Pesaran, M. H., Shin, Y., & Smith, R. J. (2001). "Bounds testing approaches to the analysis of level relationships." *Journal of Applied Econometrics*, 16(3), 289-326.
 2. Vaswani et al. (2017). "Attention is All You Need." *NeurIPS*.
-3. Hochreiter & Schmidhuber (1997). "Long Short-Term Memory." *Neural Computation*.
-4. Araci (2019). "FinBERT: Financial Sentiment Analysis with Pre-trained Language Models." *arXiv:1908.10063*.
-
-### Libraries & Tools
-- **PyTorch**: https://pytorch.org/
-- **Hugging Face Transformers**: https://huggingface.co/
-- **Statsmodels**: https://www.statsmodels.org/
-- **TA-Lib**: https://mrjbq7.github.io/ta-lib/
-- **FastAPI**: https://fastapi.tiangolo.com/
+3. Gal, Y. & Ghahramani, Z. (2016). "Dropout as a Bayesian Approximation: Representing Model Uncertainty in Deep Learning." *ICML*.
+4. Diebold, F. X. & Mariano, R. S. (1995). "Comparing Predictive Accuracy." *Journal of Business & Economic Statistics*, 13(3), 253-263.
+5. Harvey, D., Leybourne, S., & Newbold, P. (1997). "Testing the equality of prediction mean squared errors." *International Journal of Forecasting*, 13(2), 281-291.
 
 ---
 
-## 🤝 Contributing
+## Risk disclaimer
 
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+This software is for educational and research purposes. It is not financial advice, carries no performance guarantee, and — per its own evaluation results above — does not currently demonstrate a statistically significant trading edge. Do not use it to make investment decisions.
 
----
+## License
 
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 👨‍💻 Author
-
-**Principal Quantitative Researcher & ML Engineer**
-
-Built with ❤️ for the quantitative finance community.
-
----
-
-## 🌟 Star History
-
-If you find this project useful, please consider giving it a ⭐!
-
----
-
-## 📧 Contact
-
-For questions, suggestions, or collaborations:
-- GitHub Issues: [Create an issue](https://github.com/yourusername/Market_Alpha_Engine/issues)
-- Email: your.email@example.com
-
----
-
-**Happy Trading! 📈💰**
+MIT — see [LICENSE](LICENSE).

@@ -5,7 +5,7 @@ This module handles fetching OHLCV data from Yahoo Finance and financial news
 from NewsAPI, providing a unified interface for multi-modal data retrieval.
 """
 
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, Any
 from datetime import datetime, timedelta
 from pathlib import Path
 import time
@@ -182,7 +182,7 @@ class OHLCVLoader:
         df = df.dropna(how='all')
         
         # Forward-fill missing values (conservative approach for financial data)
-        df = df.fillna(method='ffill')
+        df = df.ffill()
         
         # Ensure no negative prices or volumes
         numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -360,56 +360,110 @@ class NewsLoader:
         return aggregated
 
 
+class MacroDataLoader:
+    """
+    Fetches free macro-economic indicators via yfinance.
+
+    Tickers used (all available via Yahoo Finance at no cost):
+        ^VIX      – CBOE Volatility Index
+        ^TNX      – 10-Year Treasury Yield
+        ^FVX      – 5-Year Treasury Yield
+        ^IRX      – 13-Week T-Bill Yield
+        DX-Y.NYB  – US Dollar Index
+        GLD       – SPDR Gold ETF  (risk-off proxy)
+        TLT       – iShares 20+ Yr Treasury ETF
+
+    These factors capture the macro risk environment that drives equity
+    returns beyond what OHLCV data alone can reveal.
+    """
+
+    def __init__(self, tickers: Optional[Dict[str, str]] = None):
+        self.tickers = tickers if tickers else Config.MACRO_TICKERS
+
+    def fetch(
+        self,
+        start_date: str = Config.START_DATE,
+        end_date: str = Config.END_DATE,
+    ) -> pd.DataFrame:
+        """
+        Download all macro series and return a single aligned DataFrame.
+
+        Returns:
+            DataFrame with one column per macro variable, daily frequency,
+            forward-filled to business days.  Empty columns are dropped.
+        """
+        frames: Dict[str, pd.Series] = {}
+
+        for name, ticker in self.tickers.items():
+            try:
+                raw = yf.download(
+                    ticker,
+                    start=start_date,
+                    end=end_date,
+                    progress=False,
+                    auto_adjust=True,
+                )
+                if raw.empty:
+                    logger.warning(f"No macro data for {ticker} ({name})")
+                    continue
+
+                close = raw["Close"] if "Close" in raw.columns else raw.iloc[:, 0]
+                # Handle MultiIndex columns from newer yfinance versions
+                if hasattr(close, "columns"):
+                    close = close.iloc[:, 0]
+                close = close.squeeze()
+                frames[name] = close.rename(name)
+                logger.info(f"  Macro {name} ({ticker}): {len(close)} rows")
+            except Exception as exc:
+                logger.warning(f"Failed to fetch macro {ticker}: {exc}")
+
+        if not frames:
+            logger.warning("No macro data retrieved. Continuing without macro features.")
+            return pd.DataFrame()
+
+        df = pd.concat(frames.values(), axis=1)
+        df.index = pd.to_datetime(df.index)
+        df = df.ffill()
+        logger.info(f"Macro data shape: {df.shape}")
+        return df
+
+
 class DataLoader:
     """
-    Unified data loader combining OHLCV and News data.
-    
-    Provides a single interface for fetching and merging multi-modal data
-    required by the Neuro-Econometric Engine.
+    Unified data loader: OHLCV + Macro + (optional) News.
     """
-    
+
     def __init__(
         self,
         ticker: str = Config.TICKER,
         news_api_key: str = Config.NEWS_API_KEY,
-        local_csv: Optional[str] = None
+        local_csv: Optional[str] = None,
     ):
-        """
-        Initialize unified data loader.
-        
-        Args:
-            ticker: Stock/Index ticker symbol.
-            news_api_key: NewsAPI authentication key.
-            local_csv: Optional path to local CSV file for OHLCV data.
-        """
         self.ohlcv_loader = OHLCVLoader(ticker, local_csv=local_csv)
         self.news_loader = NewsLoader(news_api_key)
-    
+        self.macro_loader = MacroDataLoader()
+
     def load_all(
         self,
         start_date: str = Config.START_DATE,
         end_date: str = Config.END_DATE,
-        include_news: bool = True
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        include_news: bool = False,
+        include_macro: bool = True,
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
-        Load both OHLCV and News data.
-        
-        Args:
-            start_date: Start date in 'YYYY-MM-DD' format.
-            end_date: End date in 'YYYY-MM-DD' format.
-            include_news: Whether to fetch news data.
-        
+        Load OHLCV, macro, and (optionally) news data.
+
         Returns:
-            Tuple of (ohlcv_df, news_df).
+            (ohlcv_df, macro_df, news_df)
         """
-        # Fetch OHLCV data
         ohlcv_df = self.ohlcv_loader.fetch(start_date, end_date)
-        
-        # Fetch news data
+
+        macro_df = self.macro_loader.fetch(start_date, end_date) if include_macro else pd.DataFrame()
+
         if include_news:
             news_df = self.news_loader.fetch(start_date=start_date, end_date=end_date)
             news_df = self.news_loader.aggregate_by_day(news_df)
         else:
             news_df = pd.DataFrame()
-        
-        return ohlcv_df, news_df
+
+        return ohlcv_df, macro_df, news_df

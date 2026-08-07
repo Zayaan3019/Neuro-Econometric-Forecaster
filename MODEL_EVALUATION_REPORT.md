@@ -1,335 +1,93 @@
-# Model Evaluation and Robustness Testing Report
+# Model Evaluation Report
 
-**Generated:** 2026-02-03  
-**Model:** Neuro-Econometric Market Alpha Engine  
-**Version:** best_model.pt (Epoch 25/40)
-
----
-
-## Executive Summary
-
-The trained model has been thoroughly tested across multiple dimensions of robustness and accuracy. **Overall Assessment: MODEL NEEDS SIGNIFICANT IMPROVEMENT**
-
-### Key Findings:
-- ✗ **Directional Accuracy: 32.84%** - Below random (50%), statistically not significant
-- ✓ **Prediction Consistency: PASS** - Model produces deterministic outputs
-- ✓ **Noise Robustness: GOOD** - Robust to input noise up to 10%
-- ✗ **Gating Mechanism: STUCK** - Alpha weight barely varies (0.4650 ± 0.0002)
-- ✓ **Temporal Stability: PASS** - Performance is stable across time windows
-- ⚠ **Sharpe Ratio: -1.171** - Negative risk-adjusted returns
+**Generated:** 2026-08-07
+**Data:** Real S&P 500 (`^GSPC`) OHLCV + macro (VIX, 10Y/5Y/3M yields, DXY, GLD, TLT), 2010-01-04 → 2024-12-31, fetched directly from Yahoo Finance's public chart API (the `yfinance` library itself was IP-rate-limited in this environment; raw endpoint access was not).
+**Evaluation methodology:** genuine rolling walk-forward, 5 expanding-window folds, model retrained from scratch each fold, evaluated only on the immediately following, never-before-seen block of time. No k-fold, no random split, anywhere in this pipeline.
+**Reproduce with:** `python walk_forward_pipeline.py` (full retrain, ~40-90 min on CPU) → writes `models_saved/walk_forward_report.json`, the source of every number below.
 
 ---
 
-## Detailed Test Results
+## Headline result
 
-### 1. Prediction Consistency Test ✓
-**Status:** PASSED
+**The hybrid Neuro-Econometric model (ARDL + Transformer + LSTM + gated fusion) shows no statistically significant directional edge on real S&P 500 daily returns, and is significantly *less* accurate than both a trivial persistence baseline and a simple AR(p) model.**
 
-The model produces perfectly consistent predictions on identical inputs, confirming deterministic behavior in evaluation mode.
+| | N | Correct | Directional Accuracy | 95% CI | p (two-sided vs 50%) | p (one-sided, beats 50%) |
+|---|---|---|---|---|---|---|
+| **Hybrid model** | 1394 | 672 | **48.21%** | [45.55%, 50.87%] | 0.189 | 0.914 (fails) |
+| ARIMA(p,0,q) baseline | 1394 | 744 | **53.37%** | [50.71%, 56.02%] | **0.0127** | **0.0064** (significant) |
+| Persistence (predict 0 return) | 1394 | 0 | 0.00%¹ | — | — | — |
 
-- **Standard Deviation:** 0.0
-- **Variance:** 0.0
+¹ By construction: `sign(0)` never equals `sign(nonzero actual)`, so directional accuracy is undefined/zero for a model that always predicts exactly zero. Persistence is evaluated on RMSE/Sharpe instead (below), which is the metric it's meaningful for.
 
-This is expected and correct behavior for a neural network in eval mode.
+This is not a marginal result. It is the **same conclusion independently reached three separate times** in this audit, on three different data/methodology combinations:
 
----
+| Run | Data | Methodology | Directional accuracy | p vs 50% |
+|---|---|---|---|---|
+| Single 70/15/15 split (`run_pipeline.py`) | Real | Leakage-checked, single split | 46.84% (237/506) | 0.929 (one-sided) |
+| Quarterly slices, 2024 (`test_market_conditions.py`) | Real | Current model on each calendar quarter | 45.62% avg (std 3.10%) | — |
+| **5-fold walk-forward (`walk_forward_pipeline.py`)** | **Real** | **Retrained per fold, expanding window** | **48.21% (672/1394)** | **0.189** |
 
-### 2. Noise Robustness Test ✓
-**Status:** PASSED
+## Regression accuracy and strategy performance (pooled across all 5 folds)
 
-The model demonstrates good resilience to input noise:
+| Metric | Hybrid | ARIMA(p,0,q) | Persistence |
+|---|---|---|---|
+| RMSE | 0.013548 | **0.012607** | 0.012667 |
+| MAE | 0.009038 | **0.008192** | 0.008160 |
+| IC (Pearson corr, pred vs actual return) | 0.0069 | **0.0835** | 0.0000 |
+| Sharpe of naive signal-following strategy | **-0.101** | **0.901** | 0.000 |
 
-| Noise Level | Mean Absolute Deviation |
-|------------|------------------------|
-| 1%         | 0.000011              |
-| 5%         | 0.000060              |
-| 10%        | 0.000076              |
+**Diebold-Mariano test (squared-error loss, HLN small-sample correction):**
+- Hybrid vs ARIMA: DM = 4.886, **p = 1.15e-6** → ARIMA is significantly more accurate than the hybrid model.
+- Hybrid vs persistence: DM = 4.247, **p = 2.31e-5** → persistence is significantly more accurate than the hybrid model.
+- This held in 4 of 5 individual folds (fold 4 was the lone exception, DM p=0.14, not significant) and was significant pooled.
 
-**Assessment:** Model is robust to reasonable levels of input noise, which is critical for real-world deployment where data may be imperfect.
+**Interpretation:** the additional architectural complexity — a Transformer/LSTM encoder, a learned volatility-regime gate, an HMM regime detector — does not add predictive value on this data. It actively *hurts* relative to a properly-selected univariate AR(p) model. The only component in the system that shows a genuine, statistically significant (if modest — IC≈0.08, ~53% direction) edge is the plain econometric ARIMA baseline. This is a legitimate, interesting finding in its own right: it is consistent with market micro-efficiency at the one-day horizon for a heavily-traded, large-cap index, and with the well-documented tendency of complex ML models to overfit weak/nonexistent signal that a correctly-regularized linear model does not.
 
----
+## Calibrated uncertainty (MC-Dropout, 30 samples/prediction, pooled across folds)
 
-### 3. Directional Accuracy Test ✗
-**Status:** FAILED (Critical Issue)
+| Nominal interval | Empirical coverage | Gap |
+|---|---|---|
+| 50% | 4.8% | -45.2pp |
+| 80% | 8.3% | -71.7pp |
+| 90% | 10.8% | -79.2pp |
 
-The most important metric for trading applications shows concerning results:
+PIT histogram is strongly U-shaped (519/1394 in the [0,0.1) bin, 753/1394 in the [0.9,1.0] bin, versus ~139/bin expected under uniformity); Kolmogorov-Smirnov test against Uniform(0,1) rejects calibration overwhelmingly (KS=0.489, p≈3.6e-307).
 
-- **Directional Accuracy:** 32.84%
-- **Correct Predictions:** 66/201
-- **P-value vs Random (50%):** 1.0000
-- **Statistical Significance:** NO
+**The model's uncertainty estimates are severely overconfident** — its nominal "90% interval" contains the true outcome only ~11% of the time. Per this project's own rule (never claim an X% interval without checking empirical coverage), this model's MC-Dropout intervals should **not** be presented as calibrated uncertainty in any downstream use. This is itself a useful, honestly-reported finding: the point predictions are noisy enough, and the dropout-induced variance small enough relative to it, that MC-Dropout under-estimates true predictive uncertainty by roughly an order of magnitude here.
 
-**This is a critical failure.** The model is significantly worse than random guessing, suggesting it may have learned to predict in the opposite direction or has not learned meaningful patterns.
+## Gating mechanism (fusion gate health)
 
-#### Implications:
-- Trading on these predictions would lose money
-- Model is not ready for deployment
-- Fundamental rethinking of approach may be needed
+The original audit found the gate frozen at α = 0.4650 ± 0.0002 (effectively constant). Across the 5 walk-forward folds on the current architecture: **α_std ranged from 0.050 to 0.250** (fold-by-fold: 0.050, 0.205, 0.250, 0.133, 0.083). The gate is demonstrably *not* frozen — it varies meaningfully within and across folds. This specific bug does not reproduce on the current architecture/training setup. (Root cause, per the audit: the original frozen-gate symptom was tied to the old architecture/loss combination in `app/engine/trainer.py`'s `HybridLoss`, which computes "directional accuracy" as `sign(value - batch_mean)` rather than a true sign-of-return — see Known Issues below. `run_pipeline.py` / `walk_forward_pipeline.py` use a different loss, `ProductionLoss`, with an explicit gate-variance penalty, which appears sufficient to prevent collapse.)
 
----
+## Population Stability Index (input feature drift, per fold, reference = that fold's training window)
 
-### 4. Prediction Magnitude Analysis ✓
-**Status:** PASSED
+10-decile buckets, reference = fold training split, alert threshold 0.25, moderate-drift band [0.10, 0.25) (see `app/monitoring/psi.py` docstring for the full threshold justification). Every fold flagged 14-23 of 39 features as "alert"-level drift — expected and correct given this window spans 2010-2024, including the 2020 COVID crash and the fastest Fed hiking cycle in decades:
 
-Predictions show reasonable variation:
+- **`OBV`** (On-Balance Volume, a cumulative running-sum indicator) shows PSI ≈ 8.27-8.28 in *every* fold — mechanically expected for an unbounded cumulative series and not economically meaningful; it is a candidate for exclusion or re-scaling (e.g. differencing) in future work.
+- **`yield_spread`, `yield_3m`, `yield_10y`** show large drift in 3-4 of 5 folds — a real, correctly-detected regime shift (rates went from near-zero for most of the training window to >5% by 2023).
+- This is PSI performing exactly as intended: flagging genuine, economically-explicable distribution shift, not sampling noise (see `tests/test_psi.py` for correctness verification against known synthetic shifts).
 
-| Metric | Predictions | Actuals |
-|--------|------------|---------|
-| Mean   | 0.622      | 0.045   |
-| Std    | 0.239      | 1.034   |
-| Range  | [-0.038, 1.320] | [-2.830, 3.068] |
+## ARDL bounds test (diagnostic; Pesaran-Shin-Smith)
 
-**Observation:** Predictions have much lower variance than actuals, suggesting the model may be overly conservative and not capturing the full range of market movements.
+A prior version of `ARDLBoundsTest.bounds_f_test()` was a hardcoded placeholder that always returned `(False, 0.0, {"message": "requires manual interpretation..."})` — it never ran an actual test. It has been replaced with a genuine implementation (`app/models/econometrics.py`, using `statsmodels`' `UECM`/bounds-test machinery), with AIC/BIC lag-order selection (not a fixed lag count) and real Pesaran-Shin-Smith asymptotic critical values.
 
----
+As a diagnostic (not part of the trading model), tested on S&P 500 close level vs. VIX level (2010-2024, last 800 trading days): F-statistic = 7.035 (order selected: AR=1, DL=2 by BIC) exceeds the I(1) upper bound at 5% (4.81) and 1% (6.32) — **reject H0 of no long-run relationship** between the index level and VIX level. Integration-order check confirms the standard justification for using bounds testing here: Close is I(1) (ADF level p=0.95, first-difference p≈0), VIX is I(0) (ADF level p=0.003) — a genuinely mixed-order case, which Engle-Granger cointegration testing cannot handle but PSS bounds testing can. Note: the long-run coefficient on VIX in the cointegrating vector, while economically sensible in sign, was not itself individually significant at conventional levels (t-test p≈0.38) in this sample — the joint F-test result should be read as suggestive evidence of a level relationship, not a precisely-estimated one.
 
-### 5. Gating Mechanism Analysis ✗
-**Status:** FAILED
+## Root causes found and fixed (Phase 1)
 
-The adaptive gating mechanism (α) that should dynamically weight Neural vs ARDL branches is essentially frozen:
+1. **Train/eval target mismatch (the actual cause of the original 32.84% figure).** The legacy `train_model.py` trained on the normalized **price level** (`Close` at t+1); the legacy `evaluate_model.py` read `test_df.iloc[i, -1]` as "ground truth," which — confirmed by running the real preprocessing pipeline — is `Close_diff`, the normalized **first difference**. Comparing a level-predicting model against a differenced-series target is an apples-to-oranges comparison that can produce an arbitrary, meaningless number regardless of whether the model learned anything. Independently, `evaluate_model.py` currently **cannot even load** `best_model.pt` against the current model code (`RuntimeError: Error(s) in loading state_dict` — architecturally incompatible, stale checkpoint) — reproduced by directly running it (see conversation record).
+2. **Look-ahead leakage in feature normalization.** `Preprocessor.fit_transform()` fit `StandardScaler` on whatever DataFrame was passed in, with no train-only restriction; `train_model_production.py` called it on the full pre-split dataset. `run_pipeline.py` / `walk_forward_pipeline.py` fit the scaler on the training split only, per fold.
+3. **Non-causal "directional accuracy" in the training loss.** `HybridLoss` (`app/engine/trainer.py`) computed direction as `sign(value - batch_mean)` — "above/below this batch's average" — not a true up/down signal. `ProductionLoss` (`run_pipeline.py`) uses IC / sign-of-return directly.
+4. **Synthetic training data.** `data/GSPC_ohlcv.csv` was a geometric-Brownian-motion simulation (`generate_sample_data.py`, `np.random.seed(42)`) with regime blocks, not real market data — confirmed by its 2024-12-31 close ($19,139) vs. the real S&P 500 close that day (~$5,882). Replaced with real Yahoo Finance data (see header). All results in this report are on real data.
+5. **Fabricated documentation.** `README.md` claimed 68.7% directional accuracy / 1.87 Sharpe; `PROJECT_COMPLETION.md` claimed 52.93%; `FIX_SUMMARY.md` claimed "32.84% → 65-75%" as an achieved result. None of these numbers appeared in any evaluation artifact anywhere in the repository. These documents have been removed; this report and `README.md` are the only performance claims in the project now, and every number in both is reproducible by rerunning `walk_forward_pipeline.py`.
 
-- **Mean α:** 0.4650
-- **Std α:** 0.000156
-- **Range:** [0.4646, 0.4653]
+## What's genuinely working
 
-**Analysis:** The gating weight varies by only 0.0007 across all predictions. This defeats the purpose of the adaptive fusion mechanism - the model should dynamically adjust based on market conditions but instead applies a nearly constant 46.5%/53.5% split.
-
-#### Root Causes:
-1. Insufficient training signal to learn dynamic gating
-2. Gating network may be undertrained
-3. Volatility/sentiment features may not provide enough information
-4. May need higher learning rate for fusion gate specifically
-
----
-
-### 6. Temporal Stability Test ✓
-**Status:** PASSED
-
-Performance across 6 time windows (30-day windows):
-
-- **Mean Accuracy:** 31.61%
-- **Std Accuracy:** 9.43%
-- **Range:** [17.24%, 48.28%]
-
-**Assessment:** While the absolute accuracy is poor, the model's performance is at least consistent over time (std < 15% threshold). This suggests the model isn't catastrophically failing on certain market conditions.
-
----
-
-## Unit Test Results
-
-**Overall:** 17/22 tests passed, 1 skipped, 4 failed
-
-### Failed Tests:
-1. `test_adf_test_stationary` - Type checking issue (non-critical)
-2. `test_adf_test_nonstationary` - Type checking issue (non-critical)
-3. `test_fit_predict` - ARDLResults missing 'rsquared' attribute
-4. `test_pairwise_cointegration` - Type checking issue (non-critical)
-
-Most test failures are minor type-checking issues, not fundamental algorithm problems.
-
----
-
-## Performance Metrics Summary
-
-### On Normalized/Differenced Scale:
-- **MSE:** 1.488287
-- **RMSE:** 1.219954
-- **MAE:** 0.963694
-- **R²:** -0.390934 (negative indicates worse than mean baseline)
-- **Directional Accuracy:** 32.84%
-
-### Trading Performance (2024 Test Set):
-- **Total Trades:** 195
-- **Buy Signals:** 104
-- **Sell Signals:** 91
-- **Cumulative Return:** N/A (unrealistic due to scaling issues)
-- **Sharpe Ratio:** -1.171 (negative = losing money)
-- **Max Drawdown:** -152,319% (unrealistic, indicates scaling problem)
-- **Win Rate:** 51.79%
-
----
-
-## Critical Issues Identified
-
-### 🔴 High Priority:
-
-1. **Inverted Directional Accuracy (32.84%)**
-   - Model predicts opposite of reality more often than correct
-   - Immediate investigation needed
-   - May indicate sign error in loss function or data preprocessing
-
-2. **Frozen Gating Mechanism**
-   - Adaptive fusion not working as designed
-   - No dynamic adjustment to market conditions
-   - Defeats purpose of hybrid architecture
-
-3. **Negative R² (-0.39)**
-   - Worse than simply predicting the mean
-   - Fundamental model effectiveness issue
-
-4. **Inverse Transform Not Implemented**
-   - Cannot properly evaluate predictions on original price scale
-   - Makes interpretation difficult
-
-### 🟡 Medium Priority:
-
-5. **Low Prediction Variance**
-   - Model too conservative
-   - May be over-regularized
-
-6. **ARDL Model Issues**
-   - statsmodels compatibility problems
-   - Missing R² attribute
-
-### 🟢 Low Priority:
-
-7. **Test Suite Maintenance**
-   - Minor type checking issues
-   - Deprecation warnings (pandas, scipy)
-
----
-
-## Root Cause Analysis
-
-### Why is Directional Accuracy So Low?
-
-Possible causes:
-1. **Sign Error in Preprocessing:** Differencing or normalization may have inverted the target
-2. **Lookahead Bias:** Target variable may be misaligned with features
-3. **Overfitting to Training Period:** Model learned patterns specific to 2015-2023 that don't generalize to 2024
-4. **Loss Function Mismatch:** Optimizing MSE doesn't guarantee directional accuracy
-5. **Feature Engineering Issues:** Important signals may be lost in preprocessing
-
-### Why is Gating Stuck?
-
-Possible causes:
-1. **Insufficient Gradient Flow:** Fusion gate may not receive strong enough gradients
-2. **Poor Volatility/Sentiment Signals:** Using dummy values (0.02, 0.0) in testing
-3. **Network Initialization:** Gate may have initialized near 0.465 and never moved
-4. **Learning Rate:** Fusion components may need different learning rates
-
----
-
-## Recommendations
-
-### Immediate Actions (Do First):
-
-1. **Investigate Directional Accuracy**
-   ```python
-   # Check if inverting predictions improves accuracy
-   inverted_accuracy = np.mean(np.diff(predictions) < 0 == np.diff(actuals) > 0)
-   # If this is ~67%, you have a sign error
-   ```
-
-2. **Verify Data Preprocessing Pipeline**
-   - Check target variable alignment
-   - Verify differencing direction
-   - Ensure no lookahead bias
-
-3. **Implement Proper Inverse Transform**
-   - Save scaler state from training
-   - Transform predictions back to price scale
-   - Enables meaningful evaluation
-
-### Short-Term Improvements:
-
-4. **Fix Loss Function**
-   - Increase λ_directional weight significantly (e.g., 2.0 → 5.0)
-   - Consider focal loss for directional component
-   - Add explicit penalties for wrong direction
-
-5. **Unfreeze Gating Mechanism**
-   - Use separate learning rate for fusion gate (higher)
-   - Add entropy regularization to encourage diversity
-   - Compute real volatility features instead of dummy values
-
-6. **Increase Training Duration**
-   - Model stopped at epoch 25/100
-   - May not have converged fully
-   - Try continuing training from checkpoint
-
-### Medium-Term Improvements:
-
-7. **Enhance Feature Engineering**
-   - Add more market regime indicators
-   - Include macroeconomic data
-   - Better sentiment features (currently using dummy 0.0)
-
-8. **Architectural Changes**
-   - Try simpler baseline (pure LSTM) to establish performance ceiling
-   - Gradually add complexity only if it helps
-   - Consider ensemble of simpler models
-
-9. **Better Validation Strategy**
-   - Implement true walk-forward optimization
-   - Use multiple train/test splits
-   - Validate on out-of-sample periods
-
-### Long-Term Considerations:
-
-10. **Alternative Approaches**
-    - Consider transformer-only architecture
-    - Explore gradient boosting (XGBoost, LightGBM) as baseline
-    - Investigate reinforcement learning for trading
-
-11. **Market Microstructure**
-    - Add bid-ask spread
-    - Include volume profile
-    - Consider order book data
-
----
-
-## Testing Checklist Completed
-
-- ✅ Basic unit tests (17/22 passed)
-- ✅ Model loading and inference
-- ✅ Prediction consistency
-- ✅ Noise robustness
-- ✅ Directional accuracy analysis
-- ✅ Magnitude analysis
-- ✅ Gating mechanism behavior
-- ✅ Temporal stability
-- ✅ Trading simulation
-- ✅ Statistical significance tests
-- ⚠️ Market condition testing (insufficient quarterly data)
-
----
+- Zero look-ahead bias, verified: `tests/test_walk_forward_boundaries.py` proves no train/test index overlap and no gaps across folds; `tests/test_regime.py` proves the HMM regime-detection feature is causal (forward-filtered posteriors only — not Viterbi, not smoothed forward-backward) via direct perturbation tests; scaler fit strictly on each fold's training split.
+- Real, working Pesaran bounds test, PSI drift monitoring, MC-Dropout calibration checking, and Diebold-Mariano significance testing — all independently unit-tested (`tests/test_psi.py`, `tests/test_statistical_tests.py`, `tests/test_uncertainty.py`, `tests/test_regime.py`) against known-answer synthetic cases, not just run once and trusted.
+- The fusion gate is demonstrably not frozen (α_std 0.05-0.25 across folds).
+- The serving API (`serve_api.py`) works end-to-end against the current model and real data (verified via `TestClient`: `/health`, `/model/info`, `/predict` all return correct values).
 
 ## Conclusion
 
-The current model, while architecturally sophisticated and technically sound in implementation, **is not ready for deployment**. The critical issue of inverted directional accuracy (32.84% vs expected 50%+) indicates a fundamental problem that must be resolved before any trading application.
-
-### Next Steps:
-1. **Debug directional accuracy issue** (highest priority)
-2. **Verify data preprocessing and target alignment**
-3. **Retrain with adjusted loss function** emphasizing directional accuracy
-4. **Fix gating mechanism** to enable adaptive fusion
-5. **Implement inverse transformation** for proper evaluation
-
-### Positive Aspects:
-- ✓ Model is stable and consistent
-- ✓ Good noise robustness
-- ✓ Temporal stability
-- ✓ Most unit tests pass
-- ✓ Architecture is well-designed
-
-### Timeline Estimate:
-- Debug and fix issues: 1-2 weeks
-- Retrain with improvements: 3-5 days
-- Re-evaluation: 1 day
-- **Total:** ~3 weeks to production-ready model
-
----
-
-## Files Generated
-
-- `models_saved/evaluation_report.json` - Basic evaluation metrics
-- `models_saved/robustness_test_results.json` - Comprehensive robustness tests
-- `models_saved/market_condition_test.json` - Market condition analysis
-- `MODEL_EVALUATION_REPORT.md` - This report
-
----
-
-**Report Generated by:** Model Robustness Testing Suite  
-**Date:** February 3, 2026  
-**Test Coverage:** Comprehensive (Accuracy, Robustness, Stability, Statistical Significance)
+This is an honest negative result, arrived at independently three times with consistent effect size, and confirmed via a proper significance test (Diebold-Mariano) that the added model complexity is not just "no better than," but **measurably worse than**, a simple econometric baseline. Per this project's own evaluation discipline: **do not deploy the hybrid model for live trading signal generation.** The one component that does show a small, statistically significant edge (ARIMA, IC≈0.08, ~53.4% direction, p=0.013) is worth further isolated investigation, but that is a materially smaller and more modest claim than the original "68.7% accuracy" marketing copy this repository used to contain.

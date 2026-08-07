@@ -19,8 +19,12 @@ tokenizers==0.13.3
 sentencepiece==0.1.99
 
 # Econometrics & Time Series
-statsmodels==0.14.0
+# NOTE: 0.14.0-0.14.2 wheels have a Cython/numpy-2.x ABI incompatibility that
+# breaks statsmodels.tsa.statespace (used by ARIMA/SARIMAX) -- "numpy.dtype
+# size changed, may indicate binary incompatibility". 0.14.6 fixes this.
+statsmodels==0.14.6
 arch==6.2.0
+hmmlearn==0.3.3
 
 # Technical Indicators
 TA-Lib==0.4.27
