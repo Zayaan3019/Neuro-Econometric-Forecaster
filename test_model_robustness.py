@@ -44,24 +44,36 @@ class ModelRobustnessTester:
         self.results = {}
         
     def load_model(self):
-        """Load trained model."""
-        with open(self.metadata_path, 'r') as f:
-            self.metadata = json.load(f)
-        
+        """
+        Load trained model.
+
+        NOTE: this previously read the OLD checkpoint format
+        ('model_state_dict' / 'neural_branch.input_projection...'), which
+        matched a since-refactored architecture and crashed on load against
+        the current NeuroEconometricNet. Updated to read the current
+        checkpoint format ('model_state' + explicit input_dim/config,
+        produced by run_pipeline.py / walk_forward_pipeline.py).
+        """
         checkpoint = torch.load(self.model_path, map_location=Config.DEVICE, weights_only=False)
-        input_dim = checkpoint['model_state_dict']['neural_branch.input_projection.weight'].shape[1]
-        
+        self.metadata = {
+            'config': checkpoint['config'],
+            'feature_cols': checkpoint.get('feature_cols'),
+            'val_dir_acc': checkpoint.get('val_dir_acc'),
+        }
+
         self.model = NeuroEconometricNet(
-            input_dim=input_dim,
-            hidden_dim=self.metadata['config']['hidden_dim'],
-            num_lstm_layers=self.metadata['config']['num_layers']
+            input_dim=checkpoint['input_dim'],
+            hidden_dim=checkpoint['config']['hidden_dim'],
+            nhead=checkpoint['config'].get('nhead', Config.NHEAD),
+            num_lstm_layers=checkpoint['config']['num_layers'],
+            dropout=checkpoint['config'].get('dropout', Config.DROPOUT),
         )
-        
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+
+        self.model.load_state_dict(checkpoint['model_state'])
         self.model.to(Config.DEVICE)
         self.model.eval()
-        
-        logger.info(f"✓ Model loaded: {self.model_path}")
+
+        logger.info(f"Model loaded: {self.model_path}")
         
     def test_prediction_consistency(self, test_data, n_runs=10):
         """

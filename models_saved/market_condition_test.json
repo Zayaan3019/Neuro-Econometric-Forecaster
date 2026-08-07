@@ -1,8 +1,37 @@
 {
-  "timestamp": "2026-02-03T12:58:53.887443",
-  "periods": [],
+  "timestamp": "2026-08-07T21:55:27.595316",
+  "periods": [
+    {
+      "period": "Q1 2024",
+      "n_samples": 60,
+      "rmse": 0.007949221820297633,
+      "mae": 0.006279902067035437,
+      "directional_accuracy": 50.0
+    },
+    {
+      "period": "Q2 2024",
+      "n_samples": 62,
+      "rmse": 0.00803485049562313,
+      "mae": 0.006793826352804899,
+      "directional_accuracy": 45.16129032258064
+    },
+    {
+      "period": "Q3 2024",
+      "n_samples": 63,
+      "rmse": 0.0115436792144928,
+      "mae": 0.009358835406601429,
+      "directional_accuracy": 41.269841269841265
+    },
+    {
+      "period": "Q4 2024",
+      "n_samples": 63,
+      "rmse": 0.008907018325629158,
+      "mae": 0.0066929473541677,
+      "directional_accuracy": 46.03174603174603
+    }
+  ],
   "summary": {
-    "avg_directional_accuracy": 0.0,
-    "std_directional_accuracy": 0.0
+    "avg_directional_accuracy": 45.61571940604198,
+    "std_directional_accuracy": 3.1019412086004508
   }
 }
