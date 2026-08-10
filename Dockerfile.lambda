@@ -1,0 +1,28 @@
+# Lambda deployment image. Kept separate from `Dockerfile` (which stays as-is
+# for local `docker-compose up` dev workflows) because the Lambda Runtime
+# Interface Client base image runs a different entrypoint model — the two
+# aren't interchangeable.
+#
+# CPU-only torch (no CUDA wheels — Lambda has no GPU, and the CUDA wheel is
+# ~4x larger for zero benefit here) + requirements-lambda.txt (a trimmed
+# runtime-only dependency set — see that file's header comment for what was
+# dropped and why).
+
+FROM public.ecr.aws/lambda/python:3.11
+
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+# Base image is Amazon Linux 2 (verified via /etc/os-release), not AL2023 --
+# yum, not dnf.
+RUN yum install -y gcc gcc-c++ && yum clean all
+
+COPY requirements-lambda.txt .
+RUN pip install --no-cache-dir torch==2.0.1 --index-url https://download.pytorch.org/whl/cpu \
+ && pip install --no-cache-dir -r requirements-lambda.txt
+
+COPY app/ ./app/
+COPY *.py ./
+COPY data/ ./data/
+COPY models_saved/ ./models_saved/
+
+CMD ["serve_api.handler"]

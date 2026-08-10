@@ -7,6 +7,7 @@ for reproducible experimentation and production deployment.
 
 from pathlib import Path
 from typing import Dict, Any, List
+import os
 import torch
 import numpy as np
 import random
@@ -32,9 +33,22 @@ class Config:
     # PATHS
     # ============================================================
     PROJECT_ROOT: Path = Path(__file__).parent.parent
+    # DATA_DIR/MODEL_DIR stay under PROJECT_ROOT -- they're read sources
+    # (Dockerfile.lambda COPYs real content into them at build time), not
+    # runtime write targets, so Lambda's read-only /var/task is fine for them.
     DATA_DIR: Path = PROJECT_ROOT / "data"
     MODEL_DIR: Path = PROJECT_ROOT / "models_saved"
-    LOGS_DIR: Path = PROJECT_ROOT / "logs"
+    # LOGS_DIR IS a runtime write target (create_directories() below actually
+    # creates it, run_pipeline.py/walk_forward_pipeline.py open FileHandlers
+    # under it) -- PROJECT_ROOT/logs fails on Lambda specifically, verified
+    # empirically via a real deploy: "OSError: [Errno 30] Read-only file
+    # system: '/var/task/logs'". AWS_LAMBDA_FUNCTION_NAME is set automatically
+    # in every Lambda execution environment and never set elsewhere, so this
+    # doesn't change local/EC2/Docker-compose behavior at all -- /tmp is the
+    # one writable path Lambda guarantees.
+    LOGS_DIR: Path = (
+        Path("/tmp/logs") if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") else PROJECT_ROOT / "logs"
+    )
 
     # ============================================================
     # DATA CONFIGURATION

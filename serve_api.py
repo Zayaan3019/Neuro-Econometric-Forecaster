@@ -263,6 +263,16 @@ async def predict(request: PredictionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Lambda entrypoint (Dockerfile.lambda's CMD is "serve_api.handler"). Unused
+# outside Lambda -- local/Docker-Compose runs still go through __main__ below.
+# Mangum's default lifespan="auto" runs the @app.on_event("startup") model
+# load once per cold start (once per execution environment), then reuses the
+# warm environment for subsequent invocations, same as a long-lived process.
+from mangum import Mangum  # noqa: E402
+
+handler = Mangum(app)
+
+
 if __name__ == "__main__":
     import uvicorn
 
