@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neuro-Econometric Market Alpha Engine</title>
+<meta name="description" content="Live hybrid ARDL/Transformer/LSTM forecasting API for the S&P 500, with an honestly-reported, walk-forward-validated evaluation.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%F0%9F%93%88</text></svg>">
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;
+    --status-good:      #0ca30c;
+    --status-warning:   #fab219;
+    --status-serious:   #ec835a;
+    --status-critical:  #d03b3b;
+    --success-text:   #006300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --status-good:      #0ca30c;
+      --status-warning:   #fab219;
+      --status-serious:   #ec835a;
+      --status-critical:  #d03b3b;
+      --success-text:   #0ca30c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page-plane:     #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --success-text:   #0ca30c;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--page-plane);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 24px 20px 80px; }
+
+  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 28px; flex-wrap: wrap; }
+  .brand h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .brand p { margin: 0; color: var(--text-secondary); font-size: 0.95rem; max-width: 52ch; }
+  .header-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  a.gh-link {
+    color: var(--text-secondary); text-decoration: none; font-size: 0.85rem;
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px;
+    white-space: nowrap;
+  }
+  a.gh-link:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 0.8rem; color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px 5px 10px;
+    white-space: nowrap;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+  .status-dot.up { background: var(--status-good); }
+  .status-dot.down { background: var(--status-critical); }
+  .status-dot.pending { background: var(--status-warning); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px;
+    padding: 24px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 1.05rem; margin: 0 0 4px; }
+  .card .card-sub { color: var(--text-secondary); font-size: 0.88rem; margin: 0 0 18px; }
+
+  /* ---- Prediction card ---- */
+  .predict-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  select, button {
+    font: inherit; border-radius: 9px; border: 1px solid var(--border);
+    padding: 10px 16px; background: var(--page-plane); color: var(--text-primary);
+  }
+  select { color: var(--text-secondary); cursor: not-allowed; }
+  button.primary {
+    background: var(--series-1); color: #fff; border-color: transparent;
+    cursor: pointer; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;
+  }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  button.primary:disabled { opacity: 0.6; cursor: progress; }
+  .spinner {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
+    animation: spin 0.8s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .cold-start-note { color: var(--text-muted); font-size: 0.82rem; margin-top: 10px; }
+
+  .result { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--gridline); display: none; }
+  .result.visible { display: block; }
+  .signal-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+  .signal-badge {
+    font-weight: 700; font-size: 0.85rem; letter-spacing: 0.02em;
+    padding: 7px 16px; border-radius: 999px; display: inline-flex; align-items: center; gap: 7px;
+  }
+  .signal-badge.buy   { background: color-mix(in srgb, var(--status-good) 16%, transparent); color: var(--success-text); }
+  .signal-badge.sell  { background: color-mix(in srgb, var(--status-critical) 14%, transparent); color: var(--status-critical); }
+  .signal-badge.hold  { background: color-mix(in srgb, var(--status-warning) 20%, transparent); color: #8a5a00; }
+  :root:not([data-theme="light"]) .signal-badge.hold { color: var(--status-warning); }
+  .signal-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .as-of { color: var(--text-muted); font-size: 0.82rem; }
+
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px; }
+  .stat-tile .stat-label { color: var(--text-secondary); font-size: 0.8rem; margin-bottom: 4px; }
+  .stat-tile .stat-value { font-size: 1.35rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat-tile .stat-value.pos { color: var(--success-text); }
+  .stat-tile .stat-value.neg { color: var(--status-critical); }
+  .predict-disclaimer {
+    margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--gridline);
+    color: var(--text-muted); font-size: 0.82rem; font-style: italic;
+  }
+  .model-compare {
+    margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--gridline);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .model-compare-row {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 0.86rem; gap: 12px;
+  }
+  .model-compare-name { color: var(--text-secondary); }
+  .model-compare-val { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .model-compare-row.is-primary .model-compare-name { color: var(--text-primary); font-weight: 600; }
+  .model-compare-row.is-primary .model-compare-name::before {
+    content: "PRIMARY"; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.04em;
+    background: var(--series-1); color: #fff; border-radius: 5px; padding: 2px 6px;
+    margin-right: 8px; vertical-align: middle;
+  }
+
+  .error-box {
+    display: none; margin-top: 18px; padding: 14px 16px; border-radius: 10px;
+    background: color-mix(in srgb, var(--status-critical) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--status-critical) 30%, transparent);
+    color: var(--status-critical); font-size: 0.9rem;
+  }
+  .error-box.visible { display: block; }
+
+  /* ---- Honesty card ---- */
+  .honesty-card { border-left: 3px solid var(--status-warning); }
+  .honesty-metric-row { display: flex; gap: 28px; flex-wrap: wrap; margin: 16px 0; }
+  .honesty-metric .num { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .honesty-metric .lbl { color: var(--text-secondary); font-size: 0.8rem; }
+  .honesty-card p { color: var(--text-secondary); font-size: 0.92rem; margin: 10px 0; }
+  .honesty-card a { color: var(--series-1); }
+
+  /* ---- Chart card ---- */
+  .chart-empty { color: var(--text-muted); font-size: 0.9rem; padding: 30px 0; text-align: center; }
+  svg.chart { width: 100%; height: auto; overflow: visible; font-family: inherit; }
+  .chart-gridline { stroke: var(--gridline); stroke-width: 1; }
+  .chart-baseline { stroke: var(--baseline); stroke-width: 1; }
+  .chart-line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .chart-dot { fill: var(--surface-1); stroke: var(--series-1); stroke-width: 2; }
+  .chart-axis-label { fill: var(--text-muted); font-size: 10px; }
+  .chart-tooltip-bg { fill: var(--text-primary); rx: 6; }
+  .chart-tooltip-text { fill: var(--surface-1); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .chart-hover-line { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0; }
+
+  /* ---- Model info card ---- */
+  dl.info-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; margin: 0; font-size: 0.9rem; }
+  dl.info-grid dt { color: var(--text-secondary); }
+  dl.info-grid dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+  footer { text-align: center; color: var(--text-muted); font-size: 0.82rem; margin-top: 36px; }
+  footer a { color: var(--text-secondary); }
+
+  @media (max-width: 520px) {
+    .wrap { padding: 16px 14px 60px; }
+    header { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <h1>📈 Neuro-Econometric Market Alpha Engine</h1>
+      <p>A hybrid ARDL / Transformer / LSTM forecasting service for the S&amp;P 500 — served live from AWS Lambda, evaluated honestly below.</p>
+    </div>
+    <div class="header-actions">
+      <span class="status-pill" id="health-pill"><span class="status-dot pending" id="health-dot"></span><span id="health-text">Checking API…</span></span>
+      <a class="gh-link" href="https://github.com/Zayaan3019/Neuro-Econometric-Forecaster" target="_blank" rel="noopener">GitHub ↗</a>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>Live prediction</h2>
+    <p class="card-sub">Calls the deployed model's <code>/predict</code> endpoint in real time. One-day-ahead only.</p>
+    <div class="predict-row">
+      <select disabled title="Only ^GSPC has been verified against the live endpoint">
+        <option>^GSPC — S&amp;P 500</option>
+      </select>
+      <button class="primary" id="predict-btn" onclick="runPrediction()">
+        <span id="predict-btn-spinner" class="spinner" style="display:none;"></span>
+        <span id="predict-btn-label">Get live prediction</span>
+      </button>
+    </div>
+    <p class="cold-start-note">First request after idle time can take 15–40s (the Lambda container is cold-starting a PyTorch model). Subsequent requests are fast.</p>
+
+    <div class="error-box" id="predict-error"></div>
+
+    <div class="result" id="predict-result">
+      <div class="signal-row">
+        <span class="signal-badge" id="signal-badge"><span class="dot"></span><span id="signal-text">—</span></span>
+        <span class="as-of" id="predict-timestamp"></span>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-tile">
+          <div class="stat-label">Current price</div>
+          <div class="stat-value" id="stat-current">—</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Predicted price (t+1)</div>
+          <div class="stat-value" id="stat-predicted">—</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label" id="stat-return-label">Predicted return</div>
+          <div class="stat-value" id="stat-return">—</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Alpha gate (fusion weight)</div>
+          <div class="stat-value" id="stat-alpha">—</div>
+        </div>
+      </div>
+
+      <div class="model-compare" id="model-compare">
+        <div class="model-compare-row">
+          <span class="model-compare-name">Hybrid (ARDL+Transformer+LSTM)</span>
+          <span class="model-compare-val" id="cmp-hybrid">—</span>
+        </div>
+        <div class="model-compare-row">
+          <span class="model-compare-name">ARIMA <span id="cmp-arima-order"></span></span>
+          <span class="model-compare-val" id="cmp-arima">—</span>
+        </div>
+      </div>
+
+      <p class="predict-disclaimer" id="predict-disclaimer"></p>
+    </div>
+  </section>
+
+  <section class="card honesty-card">
+    <h2>⚠ Real, walk-forward-validated accuracy</h2>
+    <p class="card-sub">This section exists on purpose. Most "AI stock predictor" demos hide this number — here it's the second thing on the page.</p>
+    <div class="honesty-metric-row">
+      <div class="honesty-metric">
+        <div class="num" id="metric-hybrid-acc">49.2%</div>
+        <div class="lbl">Hybrid model directional accuracy</div>
+      </div>
+      <div class="honesty-metric">
+        <div class="num" id="metric-arima-acc">53.4%</div>
+        <div class="lbl">ARIMA(p,0,q) baseline accuracy — served as primary signal</div>
+      </div>
+      <div class="honesty-metric">
+        <div class="num" id="metric-nfold">5</div>
+        <div class="lbl">Walk-forward folds (retrained per fold)</div>
+      </div>
+    </div>
+    <p>
+      A genuine rolling walk-forward evaluation (never a random or k-fold split) found the complex hybrid model's directional
+      accuracy is <strong>statistically indistinguishable from a coin flip</strong>, and a Diebold-Mariano significance test
+      shows it is <strong>measurably worse</strong> than a simple econometric ARIMA baseline (p &lt; 0.001). This is consistent
+      with market micro-efficiency at the one-day horizon for a heavily-traded index — not a bug to be "fixed" by tuning harder.
+      Re-validated on 19 months of additional real data extending the evaluation window forward — the finding held, the
+      significance sharpened.
+    </p>
+    <p>
+      Full methodology, per-fold results, and every number's provenance: <a href="https://github.com/Zayaan3019/Neuro-Econometric-Forecaster/blob/main/MODEL_EVALUATION_REPORT.md" target="_blank" rel="noopener">MODEL_EVALUATION_REPORT.md ↗</a>.
+      <strong>Nothing on this page is investment advice.</strong>
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>This session's predictions</h2>
+    <p class="card-sub">Charts only what you've actually requested above — resets on page reload, stores nothing server-side.</p>
+    <div id="chart-container">
+      <div class="chart-empty">Click "Get live prediction" to start a session trend.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Model architecture</h2>
+    <p class="card-sub">Live from <code>/model/info</code>.</p>
+    <dl class="info-grid" id="model-info-grid">
+      <dt>Architecture</dt><dd id="mi-arch">—</dd>
+      <dt>Parameters</dt><dd id="mi-params">—</dd>
+      <dt>Checkpoint epoch</dt><dd id="mi-epoch">—</dd>
+      <dt>Features</dt><dd id="mi-features">—</dd>
+      <dt>Device</dt><dd id="mi-device">—</dd>
+    </dl>
+  </section>
+
+  <footer>
+    Built and deployed as part of an AWS Lambda + Terraform portfolio pipeline.
+    <a href="https://github.com/Zayaan3019/Neuro-Econometric-Forecaster" target="_blank" rel="noopener">Source</a> ·
+    <a href="https://nr6ovdr6ow6bndcql2bn7tyeqm0pwfxu.lambda-url.us-east-1.on.aws/docs" target="_blank" rel="noopener">API docs</a>
+  </footer>
+</div>
+
+<script>
+const API_BASE = "https://nr6ovdr6ow6bndcql2bn7tyeqm0pwfxu.lambda-url.us-east-1.on.aws";
+const sessionHistory = []; // [{n, predicted_return_pct, signal, timestamp}]
+
+async function checkHealth() {
+  const dot = document.getElementById('health-dot');
+  const text = document.getElementById('health-text');
+  try {
+    const resp = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(65000) });
+    const data = await resp.json();
+    if (resp.ok && data.status === 'healthy') {
+      dot.className = 'status-dot up';
+      text.textContent = `API live · ${data.model_loaded ? 'model loaded' : 'model not loaded'}`;
+    } else {
+      dot.className = 'status-dot down';
+      text.textContent = 'API unhealthy';
+    }
+  } catch (err) {
+    dot.className = 'status-dot down';
+    text.textContent = 'API unreachable';
+  }
+}
+
+async function loadModelInfo() {
+  try {
+    const resp = await fetch(`${API_BASE}/model/info`, { signal: AbortSignal.timeout(65000) });
+    const data = await resp.json();
+    document.getElementById('mi-arch').textContent = data.model_architecture || '—';
+    document.getElementById('mi-params').textContent = data.parameters ? data.parameters.toLocaleString() : '—';
+    document.getElementById('mi-epoch').textContent = data.checkpoint_metadata?.epoch ?? '—';
+    document.getElementById('mi-features').textContent = data.checkpoint_metadata?.n_features ?? '—';
+    document.getElementById('mi-device').textContent = data.device || '—';
+  } catch (err) {
+    document.getElementById('mi-arch').textContent = 'Unavailable — API unreachable';
+  }
+}
+
+function fmtUSD(n) {
+  return n == null ? '—' : n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+}
+function fmtPct(n) {
+  if (n == null) return '—';
+  const sign = n > 0 ? '+' : '';
+  return `${sign}${n.toFixed(3)}%`;
+}
+
+async function runPrediction() {
+  const btn = document.getElementById('predict-btn');
+  const spinner = document.getElementById('predict-btn-spinner');
+  const label = document.getElementById('predict-btn-label');
+  const errorBox = document.getElementById('predict-error');
+  const result = document.getElementById('predict-result');
+
+  btn.disabled = true;
+  spinner.style.display = 'inline-block';
+  label.textContent = 'Requesting…';
+  errorBox.classList.remove('visible');
+  errorBox.textContent = '';
+
+  try {
+    const resp = await fetch(`${API_BASE}/predict`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker: '^GSPC', horizon: 1 }),
+      signal: AbortSignal.timeout(65000),
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      throw new Error(`API returned ${resp.status}: ${body.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    renderPrediction(data);
+    sessionHistory.push({
+      n: sessionHistory.length + 1,
+      predicted_return_pct: data.predicted_return_pct,
+      signal: data.signal,
+      timestamp: data.timestamp,
+    });
+    renderChart();
+  } catch (err) {
+    errorBox.textContent = err.name === 'TimeoutError'
+      ? 'Request timed out after 65s. The Lambda may still be cold-starting — try again in a moment.'
+      : `Prediction failed: ${err.message}`;
+    errorBox.classList.add('visible');
+  } finally {
+    btn.disabled = false;
+    spinner.style.display = 'none';
+    label.textContent = 'Get live prediction';
+  }
+}
+
+function renderPrediction(data) {
+  const result = document.getElementById('predict-result');
+  const badge = document.getElementById('signal-badge');
+  const signalText = document.getElementById('signal-text');
+
+  const signal = (data.signal || 'HOLD').toUpperCase();
+  badge.className = 'signal-badge ' + (signal === 'BUY' ? 'buy' : signal === 'SELL' ? 'sell' : 'hold');
+  signalText.textContent = signal;
+
+  document.getElementById('predict-timestamp').textContent = `as of ${new Date(data.timestamp).toLocaleString()}`;
+  document.getElementById('stat-current').textContent = fmtUSD(data.current_price);
+  document.getElementById('stat-predicted').textContent = fmtUSD(data.predicted_price);
+  const retEl = document.getElementById('stat-return');
+  retEl.textContent = fmtPct(data.predicted_return_pct);
+  retEl.className = 'stat-value ' + (data.predicted_return_pct > 0 ? 'pos' : data.predicted_return_pct < 0 ? 'neg' : '');
+  document.getElementById('stat-alpha').textContent = data.alpha_gate != null ? data.alpha_gate.toFixed(3) : '—';
+  document.getElementById('predict-disclaimer').textContent = data.disclaimer || '';
+
+  const primary = data.primary_model || 'hybrid';
+  document.getElementById('stat-return-label').textContent = `Predicted return (${primary})`;
+
+  const hybridRow = document.getElementById('cmp-hybrid').closest('.model-compare-row');
+  const arimaRow = document.getElementById('cmp-arima').closest('.model-compare-row');
+  document.getElementById('cmp-hybrid').textContent = fmtPct(data.hybrid_predicted_return_pct);
+  hybridRow.classList.toggle('is-primary', primary === 'hybrid');
+
+  if (data.arima_predicted_return_pct != null) {
+    document.getElementById('cmp-arima').textContent = fmtPct(data.arima_predicted_return_pct);
+    document.getElementById('cmp-arima-order').textContent = data.arima_order ? `(${data.arima_order.join(',')})` : '';
+    arimaRow.style.display = '';
+    arimaRow.classList.toggle('is-primary', primary === 'arima');
+  } else {
+    arimaRow.style.display = 'none'; // ARIMA fit failed server-side; hybrid-only response
+  }
+
+  result.classList.add('visible');
+}
+
+// ---- Session chart: single-series line, dataviz-skill mark spec ----
+function renderChart() {
+  const container = document.getElementById('chart-container');
+  const pts = sessionHistory;
+  if (pts.length === 0) {
+    container.innerHTML = '<div class="chart-empty">Click "Get live prediction" to start a session trend.</div>';
+    return;
+  }
+  if (pts.length === 1) {
+    container.innerHTML = `<div class="chart-empty">1 prediction so far (${fmtPct(pts[0].predicted_return_pct)}). Request another to see a trend line.</div>`;
+    return;
+  }
+
+  const W = 800, H = 220, padL = 44, padR = 16, padT = 16, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  const values = pts.map(p => p.predicted_return_pct);
+  const vMin = Math.min(0, ...values), vMax = Math.max(0, ...values);
+  const vPad = (vMax - vMin) * 0.15 || 0.05;
+  const yMin = vMin - vPad, yMax = vMax + vPad;
+
+  const x = i => padL + (pts.length === 1 ? plotW / 2 : (i / (pts.length - 1)) * plotW);
+  const y = v => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+  const linePath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(p.predicted_return_pct).toFixed(1)}`).join(' ');
+
+  const gridlines = [yMin, (yMin + yMax) / 2, yMax].map(v =>
+    `<line class="chart-gridline" x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>
+     <text class="chart-axis-label" x="${padL - 8}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v.toFixed(2)}%</text>`
+  ).join('');
+
+  const zeroLine = (yMin < 0 && yMax > 0)
+    ? `<line class="chart-baseline" x1="${padL}" x2="${W - padR}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>`
+    : '';
+
+  const dots = pts.map((p, i) => `
+    <circle class="chart-dot" cx="${x(i).toFixed(1)}" cy="${y(p.predicted_return_pct).toFixed(1)}" r="4"
+      data-idx="${i}" data-val="${p.predicted_return_pct}" data-sig="${p.signal}"/>`
+  ).join('');
+
+  const xLabels = pts.map((p, i) =>
+    `<text class="chart-axis-label" x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle">#${p.n}</text>`
+  ).join('');
+
+  container.innerHTML = `
+    <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Predicted return across this session's requests">
+      ${gridlines}
+      ${zeroLine}
+      <path class="chart-line" d="${linePath}"/>
+      ${dots}
+      ${xLabels}
+      <line class="chart-hover-line" id="hover-line" x1="0" x2="0" y1="${padT}" y2="${H - padB}"/>
+      <rect class="chart-tooltip-bg" id="tooltip-bg" width="0" height="0" opacity="0"/>
+      <text class="chart-tooltip-text" id="tooltip-text" opacity="0"></text>
+    </svg>
+  `;
+
+  // Hover interaction: crosshair + tooltip (dataviz skill interaction spec)
+  const svg = container.querySelector('svg');
+  const hoverLine = document.getElementById('hover-line');
+  const tooltipBg = document.getElementById('tooltip-bg');
+  const tooltipText = document.getElementById('tooltip-text');
+
+  svg.querySelectorAll('.chart-dot').forEach(dot => {
+    const show = () => {
+      const cx = parseFloat(dot.getAttribute('cx'));
+      const cy = parseFloat(dot.getAttribute('cy'));
+      const val = parseFloat(dot.getAttribute('data-val'));
+      const sig = dot.getAttribute('data-sig');
+      hoverLine.setAttribute('x1', cx); hoverLine.setAttribute('x2', cx); hoverLine.style.opacity = 1;
+      const label = `${fmtPct(val)} · ${sig}`;
+      tooltipText.textContent = label;
+      tooltipText.setAttribute('x', cx + 8);
+      tooltipText.setAttribute('y', cy - 10);
+      tooltipText.style.opacity = 1;
+      const textW = label.length * 6.2 + 12;
+      tooltipBg.setAttribute('x', cx + 4);
+      tooltipBg.setAttribute('y', cy - 24);
+      tooltipBg.setAttribute('width', textW);
+      tooltipBg.setAttribute('height', 18);
+      tooltipBg.style.opacity = 0.92;
+    };
+    const hide = () => {
+      hoverLine.style.opacity = 0;
+      tooltipText.style.opacity = 0;
+      tooltipBg.style.opacity = 0;
+    };
+    dot.addEventListener('mouseenter', show);
+    dot.addEventListener('mouseleave', hide);
+    dot.addEventListener('focus', show);
+    dot.addEventListener('blur', hide);
+  });
+}
+
+checkHealth();
+loadModelInfo();
+</script>
+</body>
+</html>

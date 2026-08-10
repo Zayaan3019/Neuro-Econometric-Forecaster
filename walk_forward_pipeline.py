@@ -358,7 +358,12 @@ def main():
 
     final_report = {
         "timestamp": datetime.now().isoformat(),
-        "data_source": "real Yahoo Finance ^GSPC + macro (VIX/TNX/FVX/IRX/DXY/GLD/TLT), 2010-01-04..2024-12-31",
+        # Was a hardcoded literal ("...2010-01-04..2024-12-31") that silently
+        # went stale the moment refresh_real_data.py extended the dataset --
+        # exactly the class of bug this project's own audit exists to catch
+        # (see MODEL_EVALUATION_REPORT.md's "Fabricated documentation" root
+        # cause). Derived from Config's actual configured range instead.
+        "data_source": f"real Yahoo Finance ^GSPC + macro (VIX/TNX/FVX/IRX/DXY/GLD/TLT), {Config.START_DATE}..{Config.END_DATE}",
         "n_folds": len(boundaries),
         "fold_boundaries": boundaries,
         "fold_results": fold_results,

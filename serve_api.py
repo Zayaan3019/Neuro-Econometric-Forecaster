@@ -34,7 +34,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sklearn.preprocessing import StandardScaler
 
+from statsmodels.tsa.arima.model import ARIMA
+
 from app.config import Config
+from app.engine.baselines import fit_arima_order
 from run_pipeline import load_ohlcv, load_macro, engineer_features, precompute_ardl_predictions
 from app.models.fusion import NeuroEconometricNet
 
@@ -67,10 +70,22 @@ class PredictionResponse(BaseModel):
     ticker: str
     timestamp: str
     current_price: float
+    # "Primary" is whichever component MODEL_EVALUATION_REPORT.md's
+    # walk-forward evaluation actually supports (Config.PRIMARY_SIGNAL_MODEL)
+    # -- not always the hybrid model. Per the report's own conclusion ("do
+    # not deploy the hybrid model for live trading signal generation"),
+    # hardcoding the hybrid model as primary regardless of what the
+    # evaluation found would contradict this project's own honesty rule.
     predicted_return_pct: float
     predicted_price: float
     alpha_gate: float
     signal: str
+    primary_model: str
+    # Always both, never just the winner -- transparency over the
+    # comparison itself, not just the final pick.
+    hybrid_predicted_return_pct: float
+    arima_predicted_return_pct: Optional[float] = None
+    arima_order: Optional[List[int]] = None
     model_version: str
     disclaimer: str
 
@@ -126,6 +141,34 @@ def load_model() -> bool:
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
         return False
+
+
+def get_arima_prediction(close: pd.Series) -> tuple[Optional[float], Optional[tuple]]:
+    """
+    Live one-step-ahead ARIMA(p,0,q) forecast, using the SAME order-selection
+    function (fit_arima_order) as the walk-forward evaluation -- not a
+    reimplementation, so this is faithful to whatever that evaluation
+    actually validated, not a fresh unvalidated variant. Fits once on the
+    full available return history through today and forecasts 1 step ahead
+    (no rolling-append loop needed here, unlike the backtest version in
+    baselines.py -- there's only one live forecast to make, not a sequence
+    of historical ones to score).
+
+    Returns (None, None) on failure (e.g. insufficient history) rather than
+    raising -- an ARIMA failure should degrade the response, not 500 the
+    whole endpoint when the hybrid model's prediction is still valid.
+    """
+    try:
+        returns = close.pct_change().dropna()
+        if len(returns) < 60:
+            return None, None
+        order = fit_arima_order(returns)
+        fitted = ARIMA(returns, order=order, trend="c").fit()
+        forecast = fitted.forecast(steps=1)
+        return float(forecast.iloc[0]), order
+    except Exception as e:
+        logger.warning(f"ARIMA prediction failed, continuing with hybrid-only response: {e}")
+        return None, None
 
 
 @app.on_event("startup")
@@ -227,8 +270,19 @@ async def predict(request: PredictionRequest):
 
         with torch.no_grad():
             pred, alpha, _ = model(feat, ardl_tensor, vol_tensor, sentiment_tensor)
-            predicted_return = float(pred.item())
+            hybrid_return = float(pred.item())
             alpha_value = float(alpha.item())
+
+        arima_return, arima_order = get_arima_prediction(full_df["Close"])
+
+        # Which return drives predicted_price/signal is a config choice, not
+        # hardcoded to the hybrid model -- see PredictionResponse.primary_model's
+        # docstring. Config.PRIMARY_SIGNAL_MODEL is set from
+        # MODEL_EVALUATION_REPORT.md's actual walk-forward result, not a default
+        # assumption that the fancier model must be the one to trust.
+        use_arima = Config.PRIMARY_SIGNAL_MODEL == "arima" and arima_return is not None
+        predicted_return = arima_return if use_arima else hybrid_return
+        primary_model = "arima" if use_arima else "hybrid"
 
         predicted_price = current_price * (1 + predicted_return)
 
@@ -247,11 +301,17 @@ async def predict(request: PredictionRequest):
             predicted_price=predicted_price,
             alpha_gate=alpha_value,
             signal=signal,
+            primary_model=primary_model,
+            hybrid_predicted_return_pct=hybrid_return * 100,
+            arima_predicted_return_pct=(arima_return * 100) if arima_return is not None else None,
+            arima_order=list(arima_order) if arima_order is not None else None,
             model_version=str(checkpoint_meta.get("epoch")) if checkpoint_meta else "unknown",
             disclaimer=(
-                "This model's directional accuracy on real S&P 500 walk-forward "
-                "evaluation was not statistically distinguishable from 50% "
-                "(see MODEL_EVALUATION_REPORT.md). This output is for "
+                f"Primary signal is the {primary_model} model, per this project's own "
+                "walk-forward evaluation (see MODEL_EVALUATION_REPORT.md) -- not "
+                "necessarily the more complex one. The hybrid model's directional "
+                "accuracy on real S&P 500 data was not statistically distinguishable "
+                "from 50%. Both predictions are returned for transparency. This is a "
                 "demonstration of the serving pipeline, not a trading signal."
             ),
         )

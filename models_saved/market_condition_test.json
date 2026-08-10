@@ -1,37 +1,37 @@
 {
-  "timestamp": "2026-08-07T21:55:27.595316",
+  "timestamp": "2026-08-10T18:15:17.395711",
   "periods": [
     {
       "period": "Q1 2024",
       "n_samples": 60,
-      "rmse": 0.007949221820297633,
-      "mae": 0.006279902067035437,
-      "directional_accuracy": 50.0
+      "rmse": 0.008094582658451106,
+      "mae": 0.0064572980627417564,
+      "directional_accuracy": 48.333333333333336
     },
     {
       "period": "Q2 2024",
       "n_samples": 62,
-      "rmse": 0.00803485049562313,
-      "mae": 0.006793826352804899,
-      "directional_accuracy": 45.16129032258064
+      "rmse": 0.007582092755371988,
+      "mae": 0.006275585386902094,
+      "directional_accuracy": 46.774193548387096
     },
     {
       "period": "Q3 2024",
       "n_samples": 63,
-      "rmse": 0.0115436792144928,
-      "mae": 0.009358835406601429,
-      "directional_accuracy": 41.269841269841265
+      "rmse": 0.01086942711820581,
+      "mae": 0.008491210639476776,
+      "directional_accuracy": 49.2063492063492
     },
     {
       "period": "Q4 2024",
       "n_samples": 63,
-      "rmse": 0.008907018325629158,
-      "mae": 0.0066929473541677,
-      "directional_accuracy": 46.03174603174603
+      "rmse": 0.009055193830077695,
+      "mae": 0.006490587722510099,
+      "directional_accuracy": 49.2063492063492
     }
   ],
   "summary": {
-    "avg_directional_accuracy": 45.61571940604198,
-    "std_directional_accuracy": 3.1019412086004508
+    "avg_directional_accuracy": 48.380056323604705,
+    "std_directional_accuracy": 0.9932897546534346
   }
 }
