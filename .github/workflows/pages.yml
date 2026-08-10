@@ -1,0 +1,37 @@
+name: Deploy frontend to GitHub Pages
+
+# Static frontend only (frontend/index.html calls the Lambda Function URL
+# directly via CORS -- no build step, no secrets, nothing this workflow
+# needs beyond the standard Pages deploy permissions). Separate from
+# deploy.yml (which ships the backend to Lambda) since these have no
+# dependency on each other and no reason to block on one another.
+
+on:
+  push:
+    branches: [main]
+    paths: ["frontend/**"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend
+      - id: deployment
+        uses: actions/deploy-pages@v4
