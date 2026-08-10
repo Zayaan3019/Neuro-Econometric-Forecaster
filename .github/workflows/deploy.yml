@@ -1,0 +1,80 @@
+name: Deploy
+
+# Runs after `infra/projects/neuro-econ` has been applied once (see
+# infra/README.md) and its outputs have been copied into this repo's Settings
+# > Secrets and variables > Actions:
+#   Variables: AWS_DEPLOY_ROLE_ARN, ECR_REPOSITORY_URL, LAMBDA_FUNCTION_URL
+# No AWS access keys are stored anywhere -- this assumes an IAM role via
+# GitHub's OIDC token instead.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write   # required to request the OIDC token
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          ECR_REPOSITORY_URL: ${{ vars.ECR_REPOSITORY_URL }}
+        run: |
+          # --provenance=false --sbom=false: BuildKit's default build
+          # attestations produce a manifest LIST (not a plain image manifest),
+          # which Lambda's CreateFunction/UpdateFunctionCode rejects with
+          # "image manifest ... is not supported" -- verified empirically
+          # against this exact image during the initial infra bootstrap.
+          docker build --provenance=false --sbom=false -f Dockerfile.lambda -t "$ECR_REPOSITORY_URL:${{ github.sha }}" -t "$ECR_REPOSITORY_URL:latest" .
+          docker push "$ECR_REPOSITORY_URL:${{ github.sha }}"
+          docker push "$ECR_REPOSITORY_URL:latest"
+
+      - name: Update Lambda function code
+        env:
+          ECR_REPOSITORY_URL: ${{ vars.ECR_REPOSITORY_URL }}
+        run: |
+          aws lambda update-function-code \
+            --function-name neuro-econ-api \
+            --image-uri "$ECR_REPOSITORY_URL:${{ github.sha }}"
+          aws lambda wait function-updated --function-name neuro-econ-api
+
+      - name: Smoke test
+        env:
+          FUNCTION_URL: ${{ vars.LAMBDA_FUNCTION_URL }}
+        run: |
+          set -euo pipefail
+
+          # --max-time 125: matches the Lambda's own timeout_seconds=120 (see
+          # infra/projects/neuro-econ/main.tf) plus headroom -- a curl
+          # timeout shorter than the function's own would give up on a slow
+          # cold start before Lambda itself does, misreporting a working
+          # deploy as a smoke-test failure.
+          echo "Checking /health..."
+          health=$(curl -sf "${FUNCTION_URL}health" --max-time 125 --retry 2 --retry-delay 5 --retry-connrefused)
+          echo "$health"
+          echo "$health" | grep -q '"status":"healthy"' || { echo "Health check did not report healthy"; exit 1; }
+
+          echo "Checking /predict..."
+          predict=$(curl -sf -X POST "${FUNCTION_URL}predict" \
+            -H "Content-Type: application/json" \
+            -d '{"ticker": "^GSPC", "horizon": 1}' \
+            --max-time 125)
+          echo "$predict"
+          echo "$predict" | grep -q '"predicted_return_pct"' || { echo "predicted_return_pct missing from response"; exit 1; }
+          echo "$predict" | grep -q '"disclaimer"' || { echo "Honesty disclaimer missing from response -- do not ship a build that drops it"; exit 1; }
