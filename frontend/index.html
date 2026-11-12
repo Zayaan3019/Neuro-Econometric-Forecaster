@@ -177,7 +177,7 @@
 
   /* ---- Honesty card ---- */
   .honesty-card { border-left: 3px solid var(--status-warning); }
-  .honesty-metric-row { display: flex; gap: 28px; flex-wrap: wrap; margin: 16px 0; }
+  .honesty-metric-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px 28px; margin: 16px 0; }
   .honesty-metric .num { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
   .honesty-metric .lbl { color: var(--text-secondary); font-size: 0.8rem; }
   .honesty-card p { color: var(--text-secondary); font-size: 0.92rem; margin: 10px 0; }
@@ -193,7 +193,24 @@
   .chart-axis-label { fill: var(--text-muted); font-size: 10px; }
   .chart-tooltip-bg { fill: var(--text-primary); rx: 6; }
   .chart-tooltip-text { fill: var(--surface-1); font-size: 11px; font-variant-numeric: tabular-nums; }
-  .chart-hover-line { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0; }
+  .chart-hover-line { stroke: var(--text-muted); stroke-width: 1; opacity: 0; pointer-events: none; }
+  .chart-area { fill: var(--series-1); opacity: 0.10; stroke: none; }
+  .chart-end { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; }
+  .chart-forecast { fill: var(--surface-1); stroke: var(--series-1); stroke-width: 2.5; }
+  .chart-forecast-link { stroke: var(--series-1); stroke-width: 2; stroke-dasharray: 4 4; stroke-linecap: round; }
+  .chart-direct-label { fill: var(--text-secondary); font-size: 11px; }
+  .chart-direct-value { fill: var(--text-primary); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .chart-hover-dot { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; opacity: 0; pointer-events: none; }
+  .chart-hover-dot.is-forecast { fill: var(--surface-1); stroke: var(--series-1); }
+  .chart-tooltip-text.dim { opacity: 0.75; font-size: 10.5px; }
+  svg.chart:focus { outline: none; }
+  svg.chart:focus-visible { outline: 2px solid var(--series-1); outline-offset: 4px; border-radius: 6px; }
+  .chart-table { margin-top: 12px; font-size: 0.85rem; color: var(--text-secondary); }
+  .chart-table summary { cursor: pointer; }
+  .chart-table .table-scroll { max-height: 260px; overflow-y: auto; margin-top: 8px; }
+  .chart-table table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .chart-table th, .chart-table td { padding: 4px 8px; border-bottom: 1px solid var(--gridline); text-align: left; }
+  .chart-table .r { text-align: right; }
 
   /* ---- Model info card ---- */
   dl.info-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; margin: 0; font-size: 0.9rem; }
@@ -313,11 +330,15 @@
   </section>
 
   <section class="card">
-    <h2>This session's predictions</h2>
-    <p class="card-sub">Charts only what you've actually requested above — resets on page reload, stores nothing server-side.</p>
+    <h2>The forecast in context</h2>
+    <p class="card-sub">S&amp;P 500 daily closes for the last 60 sessions the model saw, and the close it forecasts for the next session. Every point is a real, completed session from Yahoo Finance.</p>
     <div id="chart-container">
-      <div class="chart-empty">Click "Get live prediction" to start a session trend.</div>
+      <div class="chart-empty">Request a prediction above to plot it against recent closes.</div>
     </div>
+    <details class="chart-table" id="chart-table" hidden>
+      <summary>Show as a table</summary>
+      <div class="table-scroll"><table><thead><tr><th>Session</th><th class="r">Close</th></tr></thead><tbody id="chart-table-body"></tbody></table></div>
+    </details>
   </section>
 
   <section class="card">
@@ -341,7 +362,6 @@
 
 <script>
 const API_BASE = "https://nr6ovdr6ow6bndcql2bn7tyeqm0pwfxu.lambda-url.us-east-1.on.aws";
-const sessionHistory = []; // [{n, predicted_return_pct, signal, timestamp}]
 
 async function checkHealth() {
   const dot = document.getElementById('health-dot');
@@ -414,13 +434,7 @@ async function runPrediction() {
     }
     const data = await resp.json();
     renderPrediction(data);
-    sessionHistory.push({
-      n: sessionHistory.length + 1,
-      predicted_return_pct: data.predicted_return_pct,
-      signal: data.signal,
-      timestamp: data.timestamp,
-    });
-    renderChart();
+    renderChart(data);
   } catch (err) {
     errorBox.textContent = err.name === 'TimeoutError'
       ? 'Request timed out after 125s. The service may still be starting up; please try again in a moment.'
@@ -481,98 +495,115 @@ function renderPrediction(data) {
   result.classList.add('visible');
 }
 
-// ---- Session chart: single-series line, dataviz-skill mark spec ----
-function renderChart() {
+// ---- Price context chart: one series + the forecast point ----
+// Mark spec: 2px line, >=8px end markers with a surface ring, hairline
+// gridlines, one y-axis, crosshair + tooltip on hover, table view below.
+function niceStep(range, target) {
+  const raw = range / target;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+}
+
+function renderChart(data) {
   const container = document.getElementById('chart-container');
-  const pts = sessionHistory;
-  if (pts.length === 0) {
-    container.innerHTML = '<div class="chart-empty">Click "Get live prediction" to start a session trend.</div>';
+  const closes = data.recent_closes || [];
+  if (closes.length < 2) {
+    container.innerHTML = '<div class="chart-empty">This API version did not return recent closes.</div>';
     return;
   }
-  if (pts.length === 1) {
-    container.innerHTML = `<div class="chart-empty">1 prediction so far (${fmtPct(pts[0].predicted_return_pct)}). Request another to see a trend line.</div>`;
-    return;
-  }
+  const pts = closes.map(c => ({ date: c.date, value: c.close, forecast: false }));
+  pts.push({ date: data.forecast_for, value: data.predicted_price, forecast: true });
 
-  const W = 800, H = 220, padL = 44, padR = 16, padT = 16, padB = 28;
+  const W = 800, H = 260, padL = 58, padR = 96, padT = 16, padB = 30;
   const plotW = W - padL - padR, plotH = H - padT - padB;
-
-  const values = pts.map(p => p.predicted_return_pct);
-  const vMin = Math.min(0, ...values), vMax = Math.max(0, ...values);
-  const vPad = (vMax - vMin) * 0.15 || 0.05;
-  const yMin = vMin - vPad, yMax = vMax + vPad;
-
-  const x = i => padL + (pts.length === 1 ? plotW / 2 : (i / (pts.length - 1)) * plotW);
+  const values = pts.map(p => p.value);
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const step = niceStep(hi - lo || 1, 4);
+  const yMin = Math.floor(lo / step) * step, yMax = Math.ceil(hi / step) * step;
+  const x = i => padL + (i / (pts.length - 1)) * plotW;
   const y = v => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+  const fmtDay = d => new Date(d + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
-  const linePath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(p.predicted_return_pct).toFixed(1)}`).join(' ');
+  const hist = pts.slice(0, -1);
+  const lastI = hist.length - 1, fI = pts.length - 1;
+  const linePath = hist.map((p, i) => `${i ? 'L' : 'M'} ${x(i).toFixed(1)} ${y(p.value).toFixed(1)}`).join(' ');
 
-  const gridlines = [yMin, (yMin + yMax) / 2, yMax].map(v =>
-    `<line class="chart-gridline" x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>
-     <text class="chart-axis-label" x="${padL - 8}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v.toFixed(2)}%</text>`
-  ).join('');
+  let grid = '';
+  for (let v = yMin; v <= yMax + step / 2; v += step) {
+    grid += `<line class="chart-gridline" x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>
+      <text class="chart-axis-label" x="${padL - 8}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v.toLocaleString('en-US')}</text>`;
+  }
+  const xTicks = [0, Math.round(lastI / 2), lastI].map(i =>
+    `<text class="chart-axis-label" x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${fmtDay(pts[i].date)}</text>`).join('');
 
-  const zeroLine = (yMin < 0 && yMax > 0)
-    ? `<line class="chart-baseline" x1="${padL}" x2="${W - padR}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>`
-    : '';
-
-  const dots = pts.map((p, i) => `
-    <circle class="chart-dot" cx="${x(i).toFixed(1)}" cy="${y(p.predicted_return_pct).toFixed(1)}" r="4"
-      data-idx="${i}" data-val="${p.predicted_return_pct}" data-sig="${p.signal}"/>`
-  ).join('');
-
-  const xLabels = pts.map((p, i) =>
-    `<text class="chart-axis-label" x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle">#${p.n}</text>`
-  ).join('');
-
+  const fUp = data.predicted_price >= data.current_price;
   container.innerHTML = `
-    <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Predicted return across this session's requests">
-      ${gridlines}
-      ${zeroLine}
+    <svg class="chart" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="S&P 500 closes for the last ${hist.length} sessions, ${fmtDay(hist[0].date)} to ${fmtDay(hist[lastI].date)}, and the forecast close for ${fmtDay(data.forecast_for)}">
+      ${grid}
+      <path class="chart-area" d="${linePath} L ${x(lastI).toFixed(1)} ${(padT + plotH).toFixed(1)} L ${x(0).toFixed(1)} ${(padT + plotH).toFixed(1)} Z"/>
       <path class="chart-line" d="${linePath}"/>
-      ${dots}
-      ${xLabels}
-      <line class="chart-hover-line" id="hover-line" x1="0" x2="0" y1="${padT}" y2="${H - padB}"/>
-      <rect class="chart-tooltip-bg" id="tooltip-bg" width="0" height="0" opacity="0"/>
-      <text class="chart-tooltip-text" id="tooltip-text" opacity="0"></text>
-    </svg>
-  `;
+      <line class="chart-forecast-link" x1="${x(lastI).toFixed(1)}" y1="${y(hist[lastI].value).toFixed(1)}" x2="${x(fI).toFixed(1)}" y2="${y(data.predicted_price).toFixed(1)}"/>
+      <circle class="chart-end" cx="${x(lastI).toFixed(1)}" cy="${y(hist[lastI].value).toFixed(1)}" r="4.5"/>
+      <circle class="chart-forecast" cx="${x(fI).toFixed(1)}" cy="${y(data.predicted_price).toFixed(1)}" r="5"/>
+      <text class="chart-direct-label" x="${(x(fI) + 10).toFixed(1)}" y="${(y(data.predicted_price) + (fUp ? -6 : 14)).toFixed(1)}">Forecast</text>
+      <text class="chart-direct-value" x="${(x(fI) + 10).toFixed(1)}" y="${(y(data.predicted_price) + (fUp ? 8 : 28)).toFixed(1)}">${fmtUSD(data.predicted_price)}</text>
+      ${xTicks}
+      <line class="chart-hover-line" id="hover-line" x1="0" x2="0" y1="${padT}" y2="${padT + plotH}"/>
+      <circle class="chart-hover-dot" id="hover-dot" r="4.5" cx="0" cy="0"/>
+      <g id="tooltip" opacity="0"><rect class="chart-tooltip-bg" id="tooltip-bg" height="34"/><text class="chart-tooltip-text" id="tooltip-l1"></text><text class="chart-tooltip-text dim" id="tooltip-l2"></text></g>
+      <rect id="hover-capture" x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="transparent"/>
+    </svg>`;
 
-  // Hover interaction: crosshair + tooltip (dataviz skill interaction spec)
   const svg = container.querySelector('svg');
-  const hoverLine = document.getElementById('hover-line');
-  const tooltipBg = document.getElementById('tooltip-bg');
-  const tooltipText = document.getElementById('tooltip-text');
+  const capture = svg.querySelector('#hover-capture');
+  const line = svg.querySelector('#hover-line');
+  const dot = svg.querySelector('#hover-dot');
+  const tip = svg.querySelector('#tooltip');
+  const bg = svg.querySelector('#tooltip-bg');
+  const l1 = svg.querySelector('#tooltip-l1');
+  const l2 = svg.querySelector('#tooltip-l2');
 
-  svg.querySelectorAll('.chart-dot').forEach(dot => {
-    const show = () => {
-      const cx = parseFloat(dot.getAttribute('cx'));
-      const cy = parseFloat(dot.getAttribute('cy'));
-      const val = parseFloat(dot.getAttribute('data-val'));
-      const sig = dot.getAttribute('data-sig');
-      hoverLine.setAttribute('x1', cx); hoverLine.setAttribute('x2', cx); hoverLine.style.opacity = 1;
-      const label = `${fmtPct(val)} · ${sig}`;
-      tooltipText.textContent = label;
-      tooltipText.setAttribute('x', cx + 8);
-      tooltipText.setAttribute('y', cy - 10);
-      tooltipText.style.opacity = 1;
-      const textW = label.length * 6.2 + 12;
-      tooltipBg.setAttribute('x', cx + 4);
-      tooltipBg.setAttribute('y', cy - 24);
-      tooltipBg.setAttribute('width', textW);
-      tooltipBg.setAttribute('height', 18);
-      tooltipBg.style.opacity = 0.92;
-    };
-    const hide = () => {
-      hoverLine.style.opacity = 0;
-      tooltipText.style.opacity = 0;
-      tooltipBg.style.opacity = 0;
-    };
-    dot.addEventListener('mouseenter', show);
-    dot.addEventListener('mouseleave', hide);
-    dot.addEventListener('focus', show);
-    dot.addEventListener('blur', hide);
+  const show = (i) => {
+    const p = pts[i];
+    const cx = x(i), cy = y(p.value);
+    line.setAttribute('x1', cx); line.setAttribute('x2', cx); line.style.opacity = 1;
+    dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.style.opacity = 1;
+    dot.classList.toggle('is-forecast', p.forecast);
+    l1.textContent = `${fmtUSD(p.value)}`;
+    l2.textContent = p.forecast ? `forecast for ${fmtDay(p.date)}` : `close, ${fmtDay(p.date)}`;
+    const w = Math.max(l1.textContent.length * 7.2, l2.textContent.length * 6.1) + 16;
+    const left = cx + 12 + w > W ? cx - 12 - w : cx + 12;
+    const top = Math.max(padT, Math.min(cy - 17, padT + plotH - 34));
+    bg.setAttribute('x', left); bg.setAttribute('y', top); bg.setAttribute('width', w);
+    l1.setAttribute('x', left + 8); l1.setAttribute('y', top + 14);
+    l2.setAttribute('x', left + 8); l2.setAttribute('y', top + 27);
+    tip.setAttribute('opacity', 1);
+  };
+  const hide = () => { line.style.opacity = 0; dot.style.opacity = 0; tip.setAttribute('opacity', 0); };
+  const nearest = (evt) => {
+    const box = svg.getBoundingClientRect();
+    const sx = (evt.clientX - box.left) * (W / box.width);
+    return Math.max(0, Math.min(pts.length - 1, Math.round(((sx - padL) / plotW) * (pts.length - 1))));
+  };
+  capture.addEventListener('pointermove', e => show(nearest(e)));
+  capture.addEventListener('pointerleave', hide);
+  // Keyboard: focus the chart, then step through points with the arrow keys.
+  svg.setAttribute('tabindex', '0');
+  let cursor = fI;
+  svg.addEventListener('keydown', e => {
+    if (e.key === 'ArrowLeft') cursor = Math.max(0, cursor - 1);
+    else if (e.key === 'ArrowRight') cursor = Math.min(fI, cursor + 1);
+    else return;
+    e.preventDefault(); show(cursor);
   });
+  svg.addEventListener('blur', hide);
+
+  const body = document.getElementById('chart-table-body');
+  body.innerHTML = pts.slice().reverse().map(p =>
+    `<tr><td>${p.forecast ? 'Forecast, ' : ''}${p.date}</td><td class="r">${fmtUSD(p.value)}</td></tr>`).join('');
+  document.getElementById('chart-table').hidden = false;
 }
 
 checkHealth();

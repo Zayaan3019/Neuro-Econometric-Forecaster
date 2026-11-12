@@ -96,6 +96,9 @@ class PredictionResponse(BaseModel):
     data_source: str
     live_rows_appended: int
     data_note: Optional[str] = None
+    # The last RECENT_SESSIONS closes the forecast was made from, oldest first,
+    # so a client can show the forecast in the context of real prices.
+    recent_closes: List[Dict[str, Any]] = []
 
 
 class HealthResponse(BaseModel):
@@ -192,6 +195,9 @@ market_data = LiveMarketData(
     macro_tickers={"VIX": "^VIX", "TNX": "^TNX", "FVX": "^FVX", "IRX": "^IRX",
                    "DXY": "DX-Y.NYB", "GLD": "GLD", "TLT": "TLT"},
 )
+
+#: Sessions of real closes returned with each forecast, for context.
+RECENT_SESSIONS = 60
 
 #: Model outputs depend only on the data, so they are cached per as-of date.
 _forecast_cache: Dict[str, Dict[str, Any]] = {}
@@ -369,6 +375,10 @@ def _response(request: "PredictionRequest", snap, f: Dict[str, Any]) -> "Predict
         data_source=snap.source,
         live_rows_appended=snap.live_rows,
         data_note=snap.note,
+        recent_closes=[
+            {"date": str(day.date()), "close": round(float(close), 2)}
+            for day, close in snap.ohlcv["Close"].iloc[-RECENT_SESSIONS:].items()
+        ],
     )
 
 
