@@ -305,6 +305,9 @@ def _forecast_from(ohlcv: pd.DataFrame, macro: pd.DataFrame) -> Dict[str, Any]:
     vol_vals = [float(np.clip(full_df[c].iloc[-1], 0, 1)) if c in full_df.columns else 0.5 for c in vol_names]
     vol_tensor = torch.tensor([vol_vals], dtype=torch.float32).to(Config.DEVICE)
 
+    # The sentiment input is disabled: no news feed is wired in, and it was
+    # held at 0 during training too, so 0 here is the trained condition, not
+    # an invented score.
     sentiment_tensor = torch.zeros(1, 1, dtype=torch.float32).to(Config.DEVICE)
 
     with torch.no_grad():

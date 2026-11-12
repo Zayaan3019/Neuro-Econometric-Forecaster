@@ -312,7 +312,9 @@ class MarketDataset(Dataset):
         features   = scaled_df[feature_cols].iloc[t-seq : t]  (seq_len, n_feat)
         ardl_pred  = (ardl_price_pred − close[t]) / close[t]  (scalar, return)
         vol_feats  = [ATR, BB_Width, ADX, vol_21d, intraday_range] at t
-        sentiment  = 0.0 (extended when FinBERT news is available)
+        sentiment  = 0.0: the input is disabled (no news feed is wired in), held
+                     at 0 in training and serving alike so the gate learns
+                     nothing from it rather than from an invented score
         target     = (close[t+1] − close[t]) / close[t]       (1-day return)
     """
 
@@ -379,7 +381,7 @@ class MarketDataset(Dataset):
             torch.from_numpy(features),
             torch.tensor([ardl_ret],   dtype=torch.float32),
             torch.from_numpy(vol_feats.astype(np.float32)),
-            torch.tensor([0.0],        dtype=torch.float32),  # sentiment placeholder
+            torch.tensor([0.0],        dtype=torch.float32),  # sentiment input disabled (constant 0, as in serving)
             torch.tensor([target],     dtype=torch.float32),
         )
 
