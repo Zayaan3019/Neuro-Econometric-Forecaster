@@ -2,7 +2,9 @@
 
 A hybrid forecasting research harness that fuses econometrics (ARDL / bounds-testing, AR baselines) with deep learning (causally-masked Transformer + LSTM) behind a learned gating mechanism, evaluated under a genuine walk-forward protocol with calibration checking, drift monitoring, and significance testing throughout.
 
-**This README makes no performance claim that isn't backed by a number in [`MODEL_EVALUATION_REPORT.md`](MODEL_EVALUATION_REPORT.md), which is reproducible end-to-end by rerunning `python walk_forward_pipeline.py`.** The honest headline: on real S&P 500 data under rolling walk-forward evaluation, the hybrid model shows **no statistically significant directional edge** (48.21% accuracy, N=1394, p=0.19 vs. a 50% null) and is **significantly less accurate** (Diebold-Mariano p<0.0001) than a simple AR(p) baseline. That negative result, and how it was reached, is the actual deliverable here — see the report for the full picture, including the one component that *does* show a modest, significant edge.
+**Live:** https://zayaan3019.github.io/Neuro-Econometric-Forecaster/ (static page on GitHub Pages; the API is a container-image AWS Lambda behind a function URL). Each forecast is made from the latest *completed* S&P 500 session and says which one: the bundled history is extended at request time with the daily bars published since. The first request after an idle period takes 1-2 minutes while the container starts and the ARIMA order search runs; later ones return in seconds.
+
+**This README makes no performance claim that isn't backed by a number in [`MODEL_EVALUATION_REPORT.md`](MODEL_EVALUATION_REPORT.md), which is reproducible end-to-end by rerunning `python walk_forward_pipeline.py`.** The honest headline, on real S&P 500 data from 2010-01-04 to 2026-08-07 under a 5-fold rolling walk-forward evaluation: the hybrid model shows **no statistically significant directional edge** (**49.24%** accuracy, 775 of N=1574, two-sided p=0.562 vs. a 50% null) and is **significantly less accurate** by Diebold-Mariano than both an order-selected ARIMA baseline (53.43% direction; DM=4.08, p=4.8e-5) and a predict-zero persistence baseline (DM=3.06, p=0.0023). That negative result, and how it was reached, is the actual deliverable here. It is the same conclusion as the first evaluation on data through 2024 (48.21%, N=1394, p=0.19), which the report keeps for comparison. Because of it, the live API serves the ARIMA forecast as its primary signal and returns the hybrid's forecast alongside, labelled.
 
 ---
 
@@ -10,9 +12,9 @@ A hybrid forecasting research harness that fuses econometrics (ARDL / bounds-tes
 
 Not "68.7% directional accuracy" (an earlier version of this README claimed that; no artifact anywhere in the repo ever produced it — see [Audit trail](#audit-trail-what-was-wrong-and-what-was-fixed)). What it does demonstrate, all independently verified and unit-tested:
 
-- **A causally-correct HMM regime detector.** Forward-filtered posteriors only (`P(state_t | obs_1..t)`) — never Viterbi decoding or forward-backward smoothing, both of which leak future information into a "what regime were we in at time t" feature. Proven, not assumed: `tests/test_regime.py` perturbs future observations and asserts the filtered posterior for the past is bit-for-bit unchanged.
+- **A causally-correct HMM regime detector.** Forward-filtered posteriors only (`P(state_t | obs_1..t)`) — never Viterbi decoding or forward-backward smoothing, both of which leak future information into a "what regime were we in at time t" feature. Proven, not assumed: `tests/test_regime.py` perturbs future observations and asserts the filtered posteriors for the past are unchanged (to within 1e-10).
 - **A genuine Pesaran-Shin-Smith ARDL bounds test**, with AIC/BIC-selected lag order (not a fixed constant) and real asymptotic critical values, replacing a placeholder that previously always returned `(False, 0.0, "requires manual interpretation")` without running anything.
-- **MC-Dropout uncertainty that is actually calibration-checked**, not assumed calibrated. On this model, it isn't (nominal 90% intervals cover ~11% of outcomes) — that's reported directly rather than hidden.
+- **MC-Dropout uncertainty that is actually calibration-checked**, not assumed calibrated. On this model, it isn't (nominal 90% intervals cover 9.6% of outcomes) — that's reported directly rather than hidden.
 - **Population Stability Index drift monitoring** on input features with an explicitly justified bucket count and alert threshold (see `app/monitoring/psi.py` docstring), not a copied "0.2" convention.
 - **A true rolling walk-forward evaluation**: 5 expanding-window folds, the model retrained from scratch each fold, evaluated only on the immediately following unseen block. Zero train/test index overlap, verified by `tests/test_walk_forward_boundaries.py`.
 - **A Diebold-Mariano significance test** comparing the hybrid model against an ARIMA baseline and a persistence baseline on identical scored timestamps — not just eyeballed RMSE.
@@ -69,7 +71,8 @@ Not "68.7% directional accuracy" (an earlier version of this README claimed that
 | `app/monitoring/psi.py` | Population Stability Index drift monitoring |
 | `run_pipeline.py` | Single 70/15/15 chronological-split training run (fast baseline, no leakage) |
 | `walk_forward_pipeline.py` | **The real evaluation**: 5-fold rolling walk-forward, retrains per fold, all baselines + DM test + PSI + calibration per fold |
-| `serve_api.py` | FastAPI inference service (real-time 1-day-ahead prediction) |
+| `serve_api.py` | FastAPI inference service and Lambda handler (Mangum): 1-day-ahead forecast from both ARIMA (primary) and the hybrid, with data provenance |
+| `app/data/live_market.py` | Extends the bundled history with completed daily bars from Yahoo's chart API at request time; drops today's bar until 16:30 ET; degrades to bundled data (and says so) if the fetch fails |
 | `tests/` | pytest suite — causality, correctness, and regression tests (see [Testing](#testing)) |
 
 ---
@@ -84,7 +87,7 @@ pip install -r requirements.txt
 
 TA-Lib is optional — `app/data/preprocessor.py` falls back to pure-Python technical indicator implementations if the `talib` binary isn't installed (this is what CI/Docker actually run on).
 
-**Data:** `data/GSPC_ohlcv.csv` contains real S&P 500 OHLCV (2010-01-04 → 2024-12-31), fetched directly from Yahoo Finance's public chart API — the `yfinance` *library* is IP-rate-limited in some sandboxed/cloud environments, but the underlying `query1.finance.yahoo.com` endpoint is not; `app/data/loader.py`'s `OHLCVLoader` will attempt a live `yfinance` fetch first and fall back to this local CSV. Macro series (VIX, yields, DXY, GLD, TLT) are similarly cached in `data/macro_cache/`. `data/GSPC_ohlcv_SYNTHETIC_backup.csv` is preserved for reference — it's the **synthetic**, geometric-Brownian-motion data (`generate_sample_data.py`) this project used to train and evaluate on before this audit; it is no longer used anywhere in the pipeline.
+**Data:** `data/GSPC_ohlcv.csv` contains real S&P 500 OHLCV (2010-01-04 → 2026-08-07, 4,174 sessions), fetched directly from Yahoo Finance's public chart API — the `yfinance` *library* is IP-rate-limited in some sandboxed/cloud environments, but the underlying `query1.finance.yahoo.com` endpoint is not; `app/data/loader.py`'s `OHLCVLoader` will attempt a live `yfinance` fetch first and fall back to this local CSV. Macro series (VIX, yields, DXY, GLD, TLT) are similarly cached in `data/macro_cache/`. Before the audit this project trained and evaluated on **synthetic** geometric-Brownian-motion prices (`generate_sample_data.py`); the simulator and its output have been deleted, so the only price sources left are this real history and the live Yahoo chart API.
 
 ---
 
@@ -100,7 +103,7 @@ Trains once on a 70/15/15 chronological split (scaler fit on train only), prints
 ```bash
 python walk_forward_pipeline.py
 ```
-~40-90 minutes on CPU (5 folds, retrained from scratch each fold). Produces `models_saved/walk_forward_report.json` — the source of every number in `MODEL_EVALUATION_REPORT.md`.
+~35 minutes on CPU with the current dataset (5 folds, retrained from scratch each fold). Produces `models_saved/walk_forward_report.json` — the source of every number in `MODEL_EVALUATION_REPORT.md`.
 
 ### Serve predictions
 ```bash
@@ -110,7 +113,12 @@ python serve_api.py
 ```bash
 curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{"ticker": "^GSPC", "horizon": 1}'
 ```
-Requires `models_saved/best_model_v2.pt` to exist (run `run_pipeline.py` first). The `/predict` response includes an explicit disclaimer linking to the evaluation report — this is a reference implementation of a serving pipeline, not a trading-signal product.
+Requires `models_saved/best_model_v2.pt` to exist (run `run_pipeline.py` first). What `/predict` returns, and why:
+
+- **Primary signal = ARIMA** (`Config.PRIMARY_SIGNAL_MODEL = "arima"`), refit on the full return history with the same BIC order search the evaluation used (`fit_arima_order`, p and q up to 3). The evaluation above says not to use the hybrid for signals, so the service doesn't. The hybrid's forecast and its gate weight α are returned alongside, labelled, never hidden.
+- **Provenance on every response:** `data_as_of` (the last completed session the forecast was made from), `forecast_for` (the next weekday; exchange holidays are not modelled), `data_source` (`bundled+live`, or `bundled` with the reason if the live fetch failed), `live_rows_appended`, and `recent_closes` (the 60 real closes the forecast was made from, which the page charts).
+- **Forecasts are cached per session.** The model output depends only on the data, so repeat requests on the same session return the same numbers without re-running anything.
+- An explicit disclaimer links to the evaluation report: this is research output, not a trading signal. The deploy workflow's smoke test fails the build if the disclaimer or `data_as_of` is missing.
 
 ### Testing
 ```bash
@@ -121,7 +129,7 @@ pytest tests/ test_market_conditions.py -v
 
 ## Testing
 
-58 pytest tests across 7 files, all currently passing (`pytest tests/ test_market_conditions.py -q` → `58 passed`):
+67 pytest tests across 9 files, all currently passing (`pytest tests/ test_market_conditions.py -q` → `67 passed`):
 
 | File | Covers |
 |---|---|
@@ -132,6 +140,7 @@ pytest tests/ test_market_conditions.py -v
 | `tests/test_uncertainty.py` | MC-Dropout sampling behavior, coverage/PIT computation correctness on synthetic well- and mis-calibrated cases |
 | `tests/test_walk_forward_boundaries.py` | No train/test index overlap or gaps across any fold, anywhere |
 | `tests/test_regression_phase1_bug.py` | Locks in the fix for the original train/eval target-mismatch bug so it can't silently regress |
+| `tests/test_live_market.py` | Live data refresh: only bars after the bundled end are appended, today's bar is held back until the session is final, null bars are skipped, an upstream failure serves bundled data and says so, a failed macro series is named, the snapshot is cached within its TTL, weekends are skipped |
 | `test_market_conditions.py` | Real 2024-quarter-by-quarter evaluation on the current model/checkpoint |
 
 `test_model_robustness.py` is a legacy diagnostic script (prediction consistency / noise robustness / alpha-gating checks) whose checkpoint loading was fixed to the current format but which has not been fully migrated to the current returns-based methodology or converted into pytest tests — treat it as informational, not part of the verified suite above.
@@ -145,7 +154,8 @@ pytest tests/ test_market_conditions.py -v
 - **ARDL long-run coefficient significance is weak** even where the joint bounds-test F-statistic rejects H0 — read as suggestive, not precise.
 - **`OBV` (On-Balance Volume) shows large PSI drift in every walk-forward fold** as an artifact of being an unbounded cumulative series, not a real signal change — a candidate for differencing or removal.
 - Only 1-day-ahead prediction is supported end-to-end; the serving API rejects other horizons.
-- Sentiment (FinBERT) scaffolding exists (`app/data/sentiment.py`) but isn't wired into the trained pipeline — `sentiment_score` is a constant 0.0 placeholder throughout.
+- Sentiment (FinBERT) scaffolding exists (`app/data/sentiment.py`) but no news feed is wired in, so the gate's sentiment input is disabled: held at 0 in training and serving alike, so the gate learns nothing from it rather than from an invented score.
+- The served model is not retrained as live bars arrive: the checkpoint and its scaler come from training on data through 2026-08-07, and only the inputs (and the ARIMA fit) are extended with newer sessions.
 
 ---
 
