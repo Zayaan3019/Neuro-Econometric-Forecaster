@@ -78,3 +78,4 @@ jobs:
           echo "$predict"
           echo "$predict" | grep -q '"predicted_return_pct"' || { echo "predicted_return_pct missing from response"; exit 1; }
           echo "$predict" | grep -q '"disclaimer"' || { echo "Honesty disclaimer missing from response -- do not ship a build that drops it"; exit 1; }
+          echo "$predict" | grep -q '"data_as_of"' || { echo "data_as_of missing -- a forecast must say which session it was made from"; exit 1; }

@@ -40,6 +40,7 @@ from app.config import Config
 from app.engine.baselines import fit_arima_order
 from run_pipeline import load_ohlcv, load_macro, engineer_features, precompute_ardl_predictions
 from app.models.fusion import NeuroEconometricNet
+from app.data.live_market import LiveMarketData, next_session_after
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -88,6 +89,13 @@ class PredictionResponse(BaseModel):
     arima_order: Optional[List[int]] = None
     model_version: str
     disclaimer: str
+    # Data provenance. A forecast is only meaningful relative to the last
+    # completed session it was made from, so that date is part of the answer.
+    data_as_of: str
+    forecast_for: str
+    data_source: str
+    live_rows_appended: int
+    data_note: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
@@ -171,6 +179,24 @@ def get_arima_prediction(close: pd.Series) -> tuple[Optional[float], Optional[tu
         return None, None
 
 
+def _load_bundled_history():
+    """The history shipped in the image, unfiltered by Config.END_DATE."""
+    ohlcv = load_ohlcv()
+    macro = load_macro(Config.START_DATE, Config.END_DATE)
+    return ohlcv, macro
+
+
+market_data = LiveMarketData(
+    _load_bundled_history,
+    ticker=Config.TICKER,
+    macro_tickers={"VIX": "^VIX", "TNX": "^TNX", "FVX": "^FVX", "IRX": "^IRX",
+                   "DXY": "DX-Y.NYB", "GLD": "GLD", "TLT": "TLT"},
+)
+
+#: Model outputs depend only on the data, so they are cached per as-of date.
+_forecast_cache: Dict[str, Dict[str, Any]] = {}
+
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting Neuro-Econometric API...")
@@ -228,99 +254,119 @@ async def predict(request: PredictionRequest):
     try:
         logger.info(f"Prediction request for {request.ticker}")
 
-        end_date = datetime.now().strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=400)).strftime("%Y-%m-%d")
-
-        ohlcv = load_ohlcv() if request.ticker == Config.TICKER else None
-        if ohlcv is None:
+        if request.ticker != Config.TICKER:
             raise HTTPException(
                 status_code=400,
-                detail=f"Only ticker '{Config.TICKER}' is supported by this reference deployment "
-                       f"(uses the locally cached OHLCV/macro data the model was trained on).",
+                detail=f"Only ticker '{Config.TICKER}' is supported by this deployment "
+                       f"(the model was trained and evaluated on it alone).",
             )
 
-        macro = load_macro(Config.START_DATE, Config.END_DATE)
-        full_df = engineer_features(ohlcv, macro)
-
-        missing = [c for c in feature_cols if c not in full_df.columns]
-        if missing:
-            raise HTTPException(status_code=500, detail=f"Feature mismatch vs checkpoint: missing {missing}")
-
-        if len(full_df) < Config.SEQ_LENGTH + 1:
-            raise HTTPException(status_code=400, detail=f"Insufficient data: need at least {Config.SEQ_LENGTH + 1} rows")
-
-        current_price = float(ohlcv["Close"].iloc[-1])
-
-        ardl_preds = precompute_ardl_predictions(full_df["Close"], window=Config.ARDL_WINDOW, lags=Config.ARDL_LAGS)
-
-        window_df = full_df.iloc[-Config.SEQ_LENGTH:].copy()
-        window_df[feature_cols] = scaler.transform(window_df[feature_cols].values)
-
-        feat = torch.tensor(window_df[feature_cols].values, dtype=torch.float32).unsqueeze(0).to(Config.DEVICE)
-
-        last_ardl = ardl_preds.iloc[-1]
-        ardl_ret = float((last_ardl - current_price) / current_price) if pd.notna(last_ardl) and current_price > 0 else 0.0
-        ardl_tensor = torch.tensor([[ardl_ret]], dtype=torch.float32).to(Config.DEVICE)
-
-        vol_names = ["ATR", "BB_Width", "ADX", "vol_21d", "intraday_range"]
-        vol_vals = [float(np.clip(full_df[c].iloc[-1], 0, 1)) if c in full_df.columns else 0.5 for c in vol_names]
-        vol_tensor = torch.tensor([vol_vals], dtype=torch.float32).to(Config.DEVICE)
-
-        sentiment_tensor = torch.zeros(1, 1, dtype=torch.float32).to(Config.DEVICE)
-
-        with torch.no_grad():
-            pred, alpha, _ = model(feat, ardl_tensor, vol_tensor, sentiment_tensor)
-            hybrid_return = float(pred.item())
-            alpha_value = float(alpha.item())
-
-        arima_return, arima_order = get_arima_prediction(full_df["Close"])
-
-        # Which return drives predicted_price/signal is a config choice, not
-        # hardcoded to the hybrid model -- see PredictionResponse.primary_model's
-        # docstring. Config.PRIMARY_SIGNAL_MODEL is set from
-        # MODEL_EVALUATION_REPORT.md's actual walk-forward result, not a default
-        # assumption that the fancier model must be the one to trust.
-        use_arima = Config.PRIMARY_SIGNAL_MODEL == "arima" and arima_return is not None
-        predicted_return = arima_return if use_arima else hybrid_return
-        primary_model = "arima" if use_arima else "hybrid"
-
-        predicted_price = current_price * (1 + predicted_return)
-
-        if abs(predicted_return) < 0.002:
-            signal = "HOLD"
-        elif predicted_return > 0:
-            signal = "BUY"
-        else:
-            signal = "SELL"
-
-        return PredictionResponse(
-            ticker=request.ticker,
-            timestamp=datetime.now().isoformat(),
-            current_price=current_price,
-            predicted_return_pct=predicted_return * 100,
-            predicted_price=predicted_price,
-            alpha_gate=alpha_value,
-            signal=signal,
-            primary_model=primary_model,
-            hybrid_predicted_return_pct=hybrid_return * 100,
-            arima_predicted_return_pct=(arima_return * 100) if arima_return is not None else None,
-            arima_order=list(arima_order) if arima_order is not None else None,
-            model_version=str(checkpoint_meta.get("epoch")) if checkpoint_meta else "unknown",
-            disclaimer=(
-                f"Primary signal is the {primary_model} model, per this project's own "
-                "walk-forward evaluation (see MODEL_EVALUATION_REPORT.md) -- not "
-                "necessarily the more complex one. The hybrid model's directional "
-                "accuracy on real S&P 500 data was not statistically distinguishable "
-                "from 50%. Both predictions are returned for transparency. This is a "
-                "demonstration of the serving pipeline, not a trading signal."
-            ),
-        )
+        snap = market_data.snapshot()
+        as_of_key = str(snap.as_of.date())
+        cached = _forecast_cache.get(as_of_key)
+        if cached is None:
+            cached = _forecast_from(snap.ohlcv, snap.macro)
+            _forecast_cache.clear()  # keep only the latest session's forecast
+            _forecast_cache[as_of_key] = cached
+        return _response(request, snap, cached)
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Prediction failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _forecast_from(ohlcv: pd.DataFrame, macro: pd.DataFrame) -> Dict[str, Any]:
+    """Run both models on the given history. Pure function of the data."""
+    full_df = engineer_features(ohlcv, macro)
+
+    missing = [c for c in feature_cols if c not in full_df.columns]
+    if missing:
+        raise HTTPException(status_code=500, detail=f"Feature mismatch vs checkpoint: missing {missing}")
+
+    if len(full_df) < Config.SEQ_LENGTH + 1:
+        raise HTTPException(status_code=400, detail=f"Insufficient data: need at least {Config.SEQ_LENGTH + 1} rows")
+
+    current_price = float(ohlcv["Close"].iloc[-1])
+
+    ardl_preds = precompute_ardl_predictions(full_df["Close"], window=Config.ARDL_WINDOW, lags=Config.ARDL_LAGS)
+
+    window_df = full_df.iloc[-Config.SEQ_LENGTH:].copy()
+    window_df[feature_cols] = scaler.transform(window_df[feature_cols].values)
+
+    feat = torch.tensor(window_df[feature_cols].values, dtype=torch.float32).unsqueeze(0).to(Config.DEVICE)
+
+    last_ardl = ardl_preds.iloc[-1]
+    ardl_ret = float((last_ardl - current_price) / current_price) if pd.notna(last_ardl) and current_price > 0 else 0.0
+    ardl_tensor = torch.tensor([[ardl_ret]], dtype=torch.float32).to(Config.DEVICE)
+
+    vol_names = ["ATR", "BB_Width", "ADX", "vol_21d", "intraday_range"]
+    vol_vals = [float(np.clip(full_df[c].iloc[-1], 0, 1)) if c in full_df.columns else 0.5 for c in vol_names]
+    vol_tensor = torch.tensor([vol_vals], dtype=torch.float32).to(Config.DEVICE)
+
+    sentiment_tensor = torch.zeros(1, 1, dtype=torch.float32).to(Config.DEVICE)
+
+    with torch.no_grad():
+        pred, alpha, _ = model(feat, ardl_tensor, vol_tensor, sentiment_tensor)
+        hybrid_return = float(pred.item())
+        alpha_value = float(alpha.item())
+
+    arima_return, arima_order = get_arima_prediction(full_df["Close"])
+
+    # Which return drives predicted_price/signal is a config choice, not
+    # hardcoded to the hybrid model -- see PredictionResponse.primary_model's
+    # docstring. Config.PRIMARY_SIGNAL_MODEL is set from
+    # MODEL_EVALUATION_REPORT.md's actual walk-forward result, not a default
+    # assumption that the fancier model must be the one to trust.
+    use_arima = Config.PRIMARY_SIGNAL_MODEL == "arima" and arima_return is not None
+    return {
+        "current_price": current_price,
+        "hybrid_return": hybrid_return,
+        "alpha": alpha_value,
+        "arima_return": arima_return,
+        "arima_order": arima_order,
+        "predicted_return": arima_return if use_arima else hybrid_return,
+        "primary_model": "arima" if use_arima else "hybrid",
+    }
+
+
+def _response(request: "PredictionRequest", snap, f: Dict[str, Any]) -> "PredictionResponse":
+    predicted_return = f["predicted_return"]
+    primary_model = f["primary_model"]
+    if abs(predicted_return) < 0.002:
+        signal = "HOLD"
+    elif predicted_return > 0:
+        signal = "BUY"
+    else:
+        signal = "SELL"
+    return PredictionResponse(
+        ticker=request.ticker,
+        timestamp=datetime.now().isoformat(),
+        current_price=f["current_price"],
+        predicted_return_pct=predicted_return * 100,
+        predicted_price=f["current_price"] * (1 + predicted_return),
+        alpha_gate=f["alpha"],
+        signal=signal,
+        primary_model=primary_model,
+        hybrid_predicted_return_pct=f["hybrid_return"] * 100,
+        arima_predicted_return_pct=(f["arima_return"] * 100) if f["arima_return"] is not None else None,
+        arima_order=list(f["arima_order"]) if f["arima_order"] is not None else None,
+        model_version=str(checkpoint_meta.get("epoch")) if checkpoint_meta else "unknown",
+        disclaimer=(
+            f"Primary signal is the {primary_model} model, per this project's own "
+            "walk-forward evaluation (see MODEL_EVALUATION_REPORT.md) -- not "
+            "necessarily the more complex one. The hybrid model's directional "
+            "accuracy on real S&P 500 data was not statistically distinguishable "
+            "from 50%. Both predictions are returned for transparency. This is "
+            "research output, not a trading signal."
+        ),
+        data_as_of=str(snap.as_of.date()),
+        forecast_for=str(next_session_after(snap.as_of).date()),
+        data_source=snap.source,
+        live_rows_appended=snap.live_rows,
+        data_note=snap.note,
+    )
 
 
 # Lambda entrypoint (Dockerfile.lambda's CMD is "serve_api.handler"). Unused

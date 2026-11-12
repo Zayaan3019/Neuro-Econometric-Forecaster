@@ -148,6 +148,8 @@
     margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--gridline);
     color: var(--text-muted); font-size: 0.82rem; font-style: italic;
   }
+  .data-provenance { margin: 14px 0 0; color: var(--text-secondary); font-size: 0.85rem; }
+  .data-provenance.stale { color: var(--status-critical); }
   .model-compare {
     margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--gridline);
     display: flex; flex-direction: column; gap: 8px;
@@ -235,7 +237,7 @@
       </button>
     </div>
     <p class="scope-note">This is a single-index specialist model — the ARDL fit, feature cache, and hybrid model weights were all trained and walk-forward-evaluated on the S&amp;P 500 only. It intentionally doesn't offer other tickers rather than silently serving an unvalidated forecast for them.</p>
-    <p class="cold-start-note">First request after idle time can take 15–40s (the Lambda container is cold-starting a PyTorch model). Subsequent requests are fast.</p>
+    <p class="cold-start-note">The first forecast after a new market close can take 1–2 minutes: the service refits the ARIMA order search (15 models) on the full return history, exactly as in the evaluation. Later requests are served from cache. Each forecast uses the latest completed S&amp;P 500 session, fetched live.</p>
 
     <div class="error-box" id="predict-error"></div>
 
@@ -246,11 +248,11 @@
       </div>
       <div class="stat-grid">
         <div class="stat-tile">
-          <div class="stat-label">Current price</div>
+          <div class="stat-label" id="stat-current-label">Last close</div>
           <div class="stat-value" id="stat-current">—</div>
         </div>
         <div class="stat-tile">
-          <div class="stat-label">Predicted price (t+1)</div>
+          <div class="stat-label" id="stat-predicted-label">Predicted close (next session)</div>
           <div class="stat-value" id="stat-predicted">—</div>
         </div>
         <div class="stat-tile">
@@ -274,6 +276,7 @@
         </div>
       </div>
 
+      <p class="data-provenance" id="predict-provenance"></p>
       <p class="predict-disclaimer" id="predict-disclaimer"></p>
     </div>
   </section>
@@ -395,12 +398,15 @@ async function runPrediction() {
   errorBox.classList.remove('visible');
   errorBox.textContent = '';
 
+  // A new trading session's first forecast refits the ARIMA order search
+  // (15 models) on the full return history; say so rather than look stuck.
+  const slowNote = setTimeout(() => { label.textContent = 'Fitting models on the latest session…'; }, 8000);
   try {
     const resp = await fetch(`${API_BASE}/predict`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ticker: '^GSPC', horizon: 1 }),
-      signal: AbortSignal.timeout(65000),
+      signal: AbortSignal.timeout(125000),
     });
     if (!resp.ok) {
       const body = await resp.text();
@@ -417,10 +423,11 @@ async function runPrediction() {
     renderChart();
   } catch (err) {
     errorBox.textContent = err.name === 'TimeoutError'
-      ? 'Request timed out after 65s. The Lambda may still be cold-starting — try again in a moment.'
+      ? 'Request timed out after 125s. The service may still be starting up; please try again in a moment.'
       : `Prediction failed: ${err.message}`;
     errorBox.classList.add('visible');
   } finally {
+    clearTimeout(slowNote);
     btn.disabled = false;
     spinner.style.display = 'none';
     label.textContent = 'Get live prediction';
@@ -436,7 +443,16 @@ function renderPrediction(data) {
   badge.className = 'signal-badge ' + (signal === 'BUY' ? 'buy' : signal === 'SELL' ? 'sell' : 'hold');
   signalText.textContent = signal;
 
-  document.getElementById('predict-timestamp').textContent = `as of ${new Date(data.timestamp).toLocaleString()}`;
+  document.getElementById('predict-timestamp').textContent = `requested ${new Date(data.timestamp).toLocaleString()}`;
+  const fmtDay = (d) => d ? new Date(d + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—';
+  document.getElementById('stat-current-label').textContent = `Last close (${fmtDay(data.data_as_of)})`;
+  document.getElementById('stat-predicted-label').textContent = `Predicted close (${fmtDay(data.forecast_for)})`;
+  const prov = document.getElementById('predict-provenance');
+  const live = data.data_source === 'bundled+live';
+  prov.textContent = live
+    ? `Market data through the ${fmtDay(data.data_as_of)} close: bundled history plus ${data.live_rows_appended} sessions fetched live from Yahoo Finance. Forecast is for the next trading session (exchange holidays not modelled).${data.data_note ? ' ' + data.data_note : ''}`
+    : `Live market data could not be fetched, so this forecast uses the bundled history ending ${fmtDay(data.data_as_of)}. ${data.data_note || ''}`;
+  prov.classList.toggle('stale', !live);
   document.getElementById('stat-current').textContent = fmtUSD(data.current_price);
   document.getElementById('stat-predicted').textContent = fmtUSD(data.predicted_price);
   const retEl = document.getElementById('stat-return');
