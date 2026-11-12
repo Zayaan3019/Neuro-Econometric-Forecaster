@@ -252,36 +252,69 @@ def engineer_features(ohlcv: pd.DataFrame, macro: pd.DataFrame) -> pd.DataFrame:
 # 3. PRE-COMPUTE ARDL PREDICTIONS (rolling AR — much faster than per-sample)
 # ─────────────────────────────────────────────────────────────────────────────
 
+#: Above this share of failed AR fits the econometric branch is no longer an
+#: AR model, so the run stops instead of training on the fallback.
+MAX_AR_FALLBACK_SHARE = 0.01
+
+
+def ar_next_close(
+    close_values: np.ndarray,
+    t: int,
+    window: int = Config.ARDL_WINDOW,
+    lags: int = Config.ARDL_LAGS,
+) -> float:
+    """AR(lags) forecast of close[t+1] from the `window` closes ending at close[t].
+
+    Uses only data known at the close of day t, so it is a genuine one-step-
+    ahead forecast of the quantity the model's target is built from. Raises on
+    a failed fit; callers decide whether a fallback is acceptable.
+    """
+    from statsmodels.tsa.ar_model import AutoReg
+
+    history = close_values[t - window + 1 : t + 1]
+    return float(AutoReg(history, lags=lags, trend="c").fit().forecast(steps=1)[0])
+
+
 def precompute_ardl_predictions(
     close: pd.Series,
     window: int = Config.ARDL_WINDOW,
     lags: int = Config.ARDL_LAGS,
 ) -> pd.Series:
     """
-    Rolling one-step-ahead AR(p) predictions using statsmodels AutoReg.
+    Rolling one-step-ahead AR(p) forecasts: preds[t] = forecast of close[t+1]
+    from close[t-window+1 .. t]. NaN during the warm-up period.
 
-    Pre-computing these once before training is ~10× faster than fitting
-    inside Dataset.__getitem__() on every sample access.
+    The last row gets a forecast too (of a close not yet in the data), which
+    is what serving needs. Pre-computing these once is ~10x faster than
+    fitting inside Dataset.__getitem__() on every sample access.
 
-    Returns a Series aligned with `close.index` (NaN for the warm-up period).
+    History of this function, kept because it is the lesson: an earlier
+    version called AutoReg(...).fit(disp=False). AutoReg.fit takes no `disp`
+    argument, so every call raised TypeError, a bare `except` replaced every
+    forecast with the previous close, and the "econometric branch" was a
+    one-day lag for every evaluation run before 2026-11-12. Only numerical
+    failures fall back now, and they are counted and capped.
     """
-    from statsmodels.tsa.ar_model import AutoReg
-
+    values = close.values.astype(float)
     preds = np.full(len(close), np.nan)
+    fallbacks = 0
 
-    log.info(f"Pre-computing ARDL predictions (window={window}, lags={lags}) …")
-    for i in tqdm(range(window, len(close) - 1), desc="ARDL rolling fit"):
-        history = close.iloc[i - window : i].values
+    log.info(f"Pre-computing AR forecasts (window={window}, lags={lags}) …")
+    for t in tqdm(range(window - 1, len(close)), desc="AR rolling fit"):
         try:
-            model = AutoReg(history, lags=lags, trend="c").fit(disp=False)
-            fc = model.forecast(steps=1)
-            preds[i] = float(fc[0])
-        except Exception:
-            preds[i] = history[-1]   # naive: last value
+            preds[t] = ar_next_close(values, t, window, lags)
+        except (ValueError, np.linalg.LinAlgError):
+            preds[t] = values[t]   # numerical failure only: naive next-close forecast
+            fallbacks += 1
+
+    attempted = len(close) - (window - 1)
+    if attempted > 0 and fallbacks > MAX_AR_FALLBACK_SHARE * attempted:
+        raise RuntimeError(
+            f"{fallbacks} of {attempted} AR fits failed; the econometric branch would be a naive lag, not an AR model"
+        )
 
     series = pd.Series(preds, index=close.index, name="ardl_pred")
-    valid = series.dropna()
-    log.info(f"  ARDL predictions ready: {len(valid)} valid out of {len(series)}")
+    log.info(f"  AR forecasts ready: {series.notna().sum()} of {len(series)} rows, {fallbacks} numerical fallbacks")
     return series
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -310,7 +343,8 @@ class MarketDataset(Dataset):
 
     For each time step t:
         features   = scaled_df[feature_cols].iloc[t-seq : t]  (seq_len, n_feat)
-        ardl_pred  = (ardl_price_pred − close[t]) / close[t]  (scalar, return)
+        ardl_pred  = (AR forecast of close[t+1] made at t − close[t]) / close[t]
+                     (scalar: the econometric branch's forecast of the target)
         vol_feats  = [ATR, BB_Width, ADX, vol_21d, intraday_range] at t
         sentiment  = 0.0: the input is disabled (no news feed is wired in), held
                      at 0 in training and serving alike so the gate learns

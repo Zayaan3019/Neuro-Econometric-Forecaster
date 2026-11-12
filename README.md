@@ -4,7 +4,7 @@ A hybrid forecasting research harness that fuses econometrics (ARDL / bounds-tes
 
 **Live:** https://zayaan3019.github.io/Neuro-Econometric-Forecaster/ (static page on GitHub Pages; the API is a container-image AWS Lambda behind a function URL). Each forecast is made from the latest *completed* S&P 500 session and says which one: the bundled history is extended at request time with the daily bars published since. The first request after an idle period takes 1-2 minutes while the container starts and the ARIMA order search runs; later ones return in seconds.
 
-**This README makes no performance claim that isn't backed by a number in [`MODEL_EVALUATION_REPORT.md`](MODEL_EVALUATION_REPORT.md), which is reproducible end-to-end by rerunning `python walk_forward_pipeline.py`.** The honest headline, on real S&P 500 data from 2010-01-04 to 2026-08-07 under a 5-fold rolling walk-forward evaluation: the hybrid model shows **no statistically significant directional edge** (**49.24%** accuracy, 775 of N=1574, two-sided p=0.562 vs. a 50% null) and is **significantly less accurate** by Diebold-Mariano than both an order-selected ARIMA baseline (53.43% direction; DM=4.08, p=4.8e-5) and a predict-zero persistence baseline (DM=3.06, p=0.0023). That negative result, and how it was reached, is the actual deliverable here. It is the same conclusion as the first evaluation on data through 2024 (48.21%, N=1394, p=0.19), which the report keeps for comparison. Because of it, the live API serves the ARIMA forecast as its primary signal and returns the hybrid's forecast alongside, labelled.
+**This README makes no performance claim that isn't backed by a number in [`MODEL_EVALUATION_REPORT.md`](MODEL_EVALUATION_REPORT.md), which is reproducible end-to-end by rerunning `python walk_forward_pipeline.py`.** The honest headline, on real S&P 500 data from 2010-01-04 to 2026-08-07 under a 5-fold rolling walk-forward evaluation: the hybrid model has **no directional edge** (**47.27%** accuracy, 744 of N=1574; two-sided p=0.032 vs. a 50% null, i.e. slightly *below* a coin, which is not a usable signal in reverse) and is **significantly less accurate** by Diebold-Mariano than both an order-selected ARIMA baseline (53.43% direction; DM=3.97, p=7.6e-5) and a predict-zero persistence baseline (DM=3.49, p=0.0005). That negative result, and how it was reached, is the actual deliverable here. These numbers are from the 2026-11-12 re-run after fixing a defect that had made the AR(5) branch silently return the previous close on every row (see the report); every earlier run, including 49.24% (N=1574) and 48.21% (N=1394), reached the same conclusion and is kept in the report for comparison. Because of it, the live API serves the ARIMA forecast as its primary signal and returns the hybrid's forecast alongside, labelled.
 
 ---
 
@@ -14,7 +14,7 @@ Not "68.7% directional accuracy" (an earlier version of this README claimed that
 
 - **A causally-correct HMM regime detector.** Forward-filtered posteriors only (`P(state_t | obs_1..t)`) — never Viterbi decoding or forward-backward smoothing, both of which leak future information into a "what regime were we in at time t" feature. Proven, not assumed: `tests/test_regime.py` perturbs future observations and asserts the filtered posteriors for the past are unchanged (to within 1e-10).
 - **A genuine Pesaran-Shin-Smith ARDL bounds test**, with AIC/BIC-selected lag order (not a fixed constant) and real asymptotic critical values, replacing a placeholder that previously always returned `(False, 0.0, "requires manual interpretation")` without running anything.
-- **MC-Dropout uncertainty that is actually calibration-checked**, not assumed calibrated. On this model, it isn't (nominal 90% intervals cover 9.6% of outcomes) — that's reported directly rather than hidden.
+- **MC-Dropout uncertainty that is actually calibration-checked**, not assumed calibrated. On this model, it isn't (nominal 90% intervals cover about 11% of outcomes) — that's reported directly rather than hidden.
 - **Population Stability Index drift monitoring** on input features with an explicitly justified bucket count and alert threshold (see `app/monitoring/psi.py` docstring), not a copied "0.2" convention.
 - **A true rolling walk-forward evaluation**: 5 expanding-window folds, the model retrained from scratch each fold, evaluated only on the immediately following unseen block. Zero train/test index overlap, verified by `tests/test_walk_forward_boundaries.py`.
 - **A Diebold-Mariano significance test** comparing the hybrid model against an ARIMA baseline and a persistence baseline on identical scored timestamps — not just eyeballed RMSE.
@@ -40,7 +40,7 @@ Not "68.7% directional accuracy" (an earlier version of this README claimed that
         │            NeuroEconometricNet                          │
         │  ┌─────────────────────┐      ┌──────────────────────┐ │
         │  │   Neural branch      │      │   Econometric branch  │ │
-        │  │  causal-masked        │      │  rolling AutoReg(p)   │ │
+        │  │  causal-masked        │      │  rolling AutoReg(5)   │ │
         │  │  Transformer → LSTM   │      │  (1-step return fcst) │ │
         │  │  → latent state h     │      │                        │ │
         │  └──────────┬───────────┘      └───────────┬───────────┘ │
@@ -129,7 +129,7 @@ pytest tests/ test_market_conditions.py -v
 
 ## Testing
 
-67 pytest tests across 9 files, all currently passing (`pytest tests/ test_market_conditions.py -q` → `67 passed`):
+73 pytest tests across 10 files, all currently passing (`pytest tests/ test_market_conditions.py -q` → `73 passed`):
 
 | File | Covers |
 |---|---|
@@ -140,6 +140,7 @@ pytest tests/ test_market_conditions.py -v
 | `tests/test_uncertainty.py` | MC-Dropout sampling behavior, coverage/PIT computation correctness on synthetic well- and mis-calibrated cases |
 | `tests/test_walk_forward_boundaries.py` | No train/test index overlap or gaps across any fold, anywhere |
 | `tests/test_regression_phase1_bug.py` | Locks in the fix for the original train/eval target-mismatch bug so it can't silently regress |
+| `tests/test_serving_parity.py` | The live API's model inputs equal the training dataset's for the same row; the AR forecast for row t uses nothing after t, targets close[t+1], and is a fitted forecast rather than the naive fallback |
 | `tests/test_live_market.py` | Live data refresh: only bars after the bundled end are appended, today's bar is held back until the session is final, null bars are skipped, an upstream failure serves bundled data and says so, a failed macro series is named, the snapshot is cached within its TTL, weekends are skipped |
 | `test_market_conditions.py` | Real 2024-quarter-by-quarter evaluation on the current model/checkpoint |
 
@@ -149,7 +150,7 @@ pytest tests/ test_market_conditions.py -v
 
 ## Known limitations (stated, not hidden)
 
-- **No statistically significant directional edge** for the hybrid model on daily S&P 500 returns (see headline result above). Do not use this for live trading signal generation.
+- **No directional edge** for the hybrid model on daily S&P 500 returns (47.27%, slightly below 50%; see headline result above). Do not use this for live trading signal generation.
 - **MC-Dropout uncertainty on this model is not calibrated** (empirical coverage far below nominal) — don't present its intervals as real confidence bounds.
 - **ARDL long-run coefficient significance is weak** even where the joint bounds-test F-statistic rejects H0 — read as suggestive, not precise.
 - **`OBV` (On-Balance Volume) shows large PSI drift in every walk-forward fold** as an artifact of being an unbounded cumulative series, not a real signal change — a candidate for differencing or removal.

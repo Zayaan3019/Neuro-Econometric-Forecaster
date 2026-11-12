@@ -38,7 +38,7 @@ from statsmodels.tsa.arima.model import ARIMA
 
 from app.config import Config
 from app.engine.baselines import fit_arima_order
-from run_pipeline import load_ohlcv, load_macro, engineer_features, precompute_ardl_predictions
+from run_pipeline import load_ohlcv, load_macro, engineer_features, ar_next_close
 from app.models.fusion import NeuroEconometricNet
 from app.data.live_market import LiveMarketData, next_session_after
 
@@ -283,6 +283,47 @@ async def predict(request: PredictionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+VOL_FEATURES = ["ATR", "BB_Width", "ADX", "vol_21d", "intraday_range"]
+
+
+def _ar_next_close_or_naive(close_values: np.ndarray, t: int) -> float:
+    """Training's per-row rule: the AR forecast, or the last close on a numerical failure."""
+    try:
+        return ar_next_close(close_values, t, Config.ARDL_WINDOW, Config.ARDL_LAGS)
+    except (ValueError, np.linalg.LinAlgError):
+        return float(close_values[t])
+
+
+def model_inputs(full_df: pd.DataFrame, cols: List[str], fitted_scaler: StandardScaler,
+                 seq_len: int = Config.SEQ_LENGTH):
+    """The hybrid's inputs for the last row, built exactly as training built them.
+
+    Mirrors `run_pipeline.MarketDataset.__getitem__` at t = the last row:
+    the sequence is the `seq_len` scaled rows BEFORE t; the econometric input
+    is the AR forecast of close[t+1] made at t, as a return on close[t]; the
+    five volatility inputs are row t's SCALED values clipped to [0, 1].
+    Serving previously used the window ending at t, raw volatility values and
+    a NaN (so 0.0) econometric input: a different model from the one
+    evaluated. tests/test_serving_parity.py pins this against MarketDataset.
+    """
+    t = len(full_df) - 1
+    if t < max(seq_len, Config.ARDL_WINDOW):
+        raise HTTPException(status_code=400, detail="Insufficient history for the model's input window")
+    scaled = fitted_scaler.transform(full_df[cols].values).astype(np.float32)
+
+    features = np.nan_to_num(scaled[t - seq_len : t], nan=0.0, posinf=0.0, neginf=0.0)
+
+    close_values = full_df["Close"].values.astype(float)
+    c_t = np.float32(close_values[t])
+    ardl_price = np.float32(_ar_next_close_or_naive(close_values, t))
+    ardl_ret = float(np.clip((ardl_price - c_t) / c_t, -0.2, 0.2)) if c_t > 0 else 0.0
+
+    vol_idx = [cols.index(c) for c in VOL_FEATURES if c in cols]
+    vol_idx = (vol_idx + [0] * 5)[:5]  # same padding rule as MarketDataset
+    vol = np.nan_to_num(np.clip(scaled[t][vol_idx], 0.0, 1.0), nan=0.5).astype(np.float32)
+    return features, ardl_ret, vol
+
+
 def _forecast_from(ohlcv: pd.DataFrame, macro: pd.DataFrame) -> Dict[str, Any]:
     """Run both models on the given history. Pure function of the data."""
     full_df = engineer_features(ohlcv, macro)
@@ -296,20 +337,10 @@ def _forecast_from(ohlcv: pd.DataFrame, macro: pd.DataFrame) -> Dict[str, Any]:
 
     current_price = float(ohlcv["Close"].iloc[-1])
 
-    ardl_preds = precompute_ardl_predictions(full_df["Close"], window=Config.ARDL_WINDOW, lags=Config.ARDL_LAGS)
-
-    window_df = full_df.iloc[-Config.SEQ_LENGTH:].copy()
-    window_df[feature_cols] = scaler.transform(window_df[feature_cols].values)
-
-    feat = torch.tensor(window_df[feature_cols].values, dtype=torch.float32).unsqueeze(0).to(Config.DEVICE)
-
-    last_ardl = ardl_preds.iloc[-1]
-    ardl_ret = float((last_ardl - current_price) / current_price) if pd.notna(last_ardl) and current_price > 0 else 0.0
+    features, ardl_ret, vol_vals = model_inputs(full_df, feature_cols, scaler)
+    feat = torch.from_numpy(features).unsqueeze(0).to(Config.DEVICE)
     ardl_tensor = torch.tensor([[ardl_ret]], dtype=torch.float32).to(Config.DEVICE)
-
-    vol_names = ["ATR", "BB_Width", "ADX", "vol_21d", "intraday_range"]
-    vol_vals = [float(np.clip(full_df[c].iloc[-1], 0, 1)) if c in full_df.columns else 0.5 for c in vol_names]
-    vol_tensor = torch.tensor([vol_vals], dtype=torch.float32).to(Config.DEVICE)
+    vol_tensor = torch.from_numpy(vol_vals).unsqueeze(0).to(Config.DEVICE)
 
     # The sentiment input is disabled: no news feed is wired in, and it was
     # held at 0 during training too, so 0 here is the trained condition, not
