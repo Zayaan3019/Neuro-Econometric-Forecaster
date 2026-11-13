@@ -1,9 +1,9 @@
 # Model Evaluation Report
 
-**Generated:** 2026-08-07 · re-run on extended data 2026-08-10 · **re-run 2026-11-12 after fixing the econometric branch (current numbers)**
+**Generated:** 2026-08-07 · re-run on extended data 2026-08-10 · re-run 2026-11-12 after fixing the econometric branch · **re-run 2026-11-14 with cost-aware Sharpe and saved per-day predictions (current numbers)**
 **Data:** Real S&P 500 (`^GSPC`) OHLCV + macro (VIX, 10Y/5Y/3M yields, DXY, GLD, TLT), 2010-01-01 → 2026-08-07, fetched directly from Yahoo Finance's public chart API (the `yfinance` library itself was IP-rate-limited in this environment; raw endpoint access was not).
 **Evaluation methodology:** genuine rolling walk-forward, 5 expanding-window folds, model retrained from scratch each fold, evaluated only on the immediately following, never-before-seen block of time. No k-fold, no random split, anywhere in this pipeline.
-**Reproduce with:** `python walk_forward_pipeline.py` (full retrain, ~35-45 min on CPU) → writes `models_saved/walk_forward_report.json`, the source of every number below.
+**Reproduce with:** `python walk_forward_pipeline.py` (full retrain, ~35-45 min on CPU) → writes `models_saved/walk_forward_report.json`, the source of every number below, and `models_saved/walk_forward_predictions.csv`, every one of the 1,574 test-day predictions (fold, date, actual return, hybrid / ARIMA / persistence forecast, gate α), so any metric here can be recomputed without retraining. ARIMA and persistence reproduce exactly. **The hybrid does not reproduce bit-for-bit** (see the next section).
 
 ---
 
@@ -17,31 +17,43 @@ It was found by a new test, `tests/test_serving_parity.py`, written to check tha
 - `serve_api.model_inputs()` reproduces `MarketDataset`'s inputs for the newest row; six tests pin the parity, the alignment, and that the AR output is a fitted forecast rather than the fallback.
 - The served checkpoint was retrained and the full walk-forward re-run. The numbers below are from that run. ARIMA and persistence are unaffected (they never used this code path), so their numbers are unchanged.
 
+## Run-to-run variance of the hybrid (found 2026-11-14)
+
+The 2026-11-14 re-run changed only reporting (cost-aware Sharpe, saved predictions), with the same seed, data and folds. ARIMA and persistence came out identical to the last digit. The hybrid did not: pooled direction accuracy **47.27% → 45.81%**, pooled Sharpe **+0.02 → −0.69**, and fold 2's Sharpe flipped from **+0.96 to −0.62**. `Config.set_seed()` seeds PyTorch, NumPy and Python, but the retrain is still not deterministic on this CPU setup; the exact source is not isolated.
+
+What this means for reading the report:
+- The hybrid's numbers carry run-to-run noise of a few points of direction accuracy and about ±1 of Sharpe per fold. Any single hybrid figure is one draw.
+- The conclusion does not depend on the draw: in both runs the hybrid is below 50% and significantly less accurate than ARIMA and persistence by Diebold-Mariano.
+- The ARIMA figures are exact and do not move.
+
+The tables below are the 2026-11-14 run, the first with every per-day prediction saved; the 2026-11-12 figures are kept alongside.
+
 ## Headline result
 
-**The hybrid Neuro-Econometric model (AR(5) branch + Transformer + LSTM + gated fusion) has no directional edge on real S&P 500 daily returns. With the AR branch working, its pooled direction accuracy is 47.27%, significantly *below* 50% (two-sided p = 0.032), and it is significantly less accurate than both an order-selected ARIMA baseline and a predict-zero persistence baseline.**
+**The hybrid Neuro-Econometric model (AR(5) branch + Transformer + LSTM + gated fusion) has no directional edge on real S&P 500 daily returns. With the AR branch working, its pooled direction accuracy is 45.81% (47.27% on the previous run), significantly *below* 50% (two-sided p = 0.00095), and it is significantly less accurate than both an order-selected ARIMA baseline and a predict-zero persistence baseline.**
 
 | | N | Correct | Directional Accuracy | 95% CI | p (two-sided vs 50%) | p (one-sided, beats 50%) |
 |---|---|---|---|---|---|---|
-| **Hybrid model** | 1574 | 744 | **47.27%** | [44.78%, 49.77%] | 0.032 | 0.986 (fails) |
+| **Hybrid model** | 1574 | 721 | **45.81%** | [43.32%, 48.31%] | 0.00095 | 0.9996 (fails) |
+| Hybrid, previous run (2026-11-12) | 1574 | 744 | 47.27% | [44.78%, 49.77%] | 0.032 | 0.986 (fails) |
 | ARIMA(p,0,q) baseline | 1574 | 841 | **53.43%** | — | — | — |
 | Persistence (predict 0 return) | 1574 | 0 | 0.00%¹ | — | — | — |
 
 ¹ By construction: `sign(0)` never equals `sign(nonzero actual)`, so directional accuracy is undefined/zero for a model that always predicts exactly zero. Persistence is evaluated on RMSE/Sharpe instead (below), which is the metric it's meaningful for.
 
-**Below 50% is not a usable signal in reverse.** The interval only just excludes 50%, it is one of many statistics computed on this evaluation, and three of the five folds are individually indistinguishable from 50%. "Flip the sign" chosen after seeing this result would be selection on the test data. The defensible reading is the same as before: no edge, and worse than the simple baseline.
+**Below 50% is not a usable signal in reverse.** It moves by about 1.5 points between two seeded runs, it is one of many statistics computed on this evaluation, and most folds are individually indistinguishable from 50%. "Flip the sign" chosen after seeing this result would be selection on the test data. The defensible reading is the same as before: no edge, and worse than the simple baseline.
 
 ### Per fold
 
 | Fold | Test rows (N scored) | Hybrid direction | ARIMA direction | ARIMA order | Hybrid IC | ARIMA IC | Hybrid Sharpe | ARIMA Sharpe | DM vs ARIMA (p) | gate α mean / std |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 2295-2670 (314) | 49.4% | 61.5% | (1,0,0) | 0.077 | 0.354 | 0.23 | 2.20 | 1.06 (0.29) | 0.78 / 0.23 |
-| 2 | 2670-3045 (314) | 49.0% | 52.2% | (1,0,0) | 0.105 | 0.046 | 0.96 | 1.18 | 1.30 (0.19) | 0.62 / 0.19 |
-| 3 | 3045-3420 (314) | 51.9% | 46.2% | (2,0,0) | 0.034 | -0.013 | 1.24 | -0.00 | 1.94 (0.054) | 0.76 / 0.20 |
-| 4 | 3420-3795 (314) | 43.0% | 55.1% | (2,0,0) | 0.007 | -0.023 | -1.29 | 0.63 | 4.39 (1.6e-5) | 0.71 / 0.14 |
-| 5 | 3795-4174 (318) | 43.1% | 52.2% | (2,0,0) | -0.012 | 0.039 | -2.09 | 0.75 | 6.58 (1.9e-10) | 0.98 / 0.02 |
+| 1 | 2295-2670 (314) | 50.6% | 61.5% | (1,0,0) | 0.067 | 0.354 | 0.44 | 2.20 | 1.08 (0.28) | 0.76 / 0.21 |
+| 2 | 2670-3045 (314) | 47.1% | 52.2% | (1,0,0) | 0.042 | 0.046 | -0.62 | 1.18 | 2.60 (0.0096) | 0.54 / 0.25 |
+| 3 | 3045-3420 (314) | 46.5% | 46.2% | (2,0,0) | -0.023 | -0.013 | -0.90 | -0.00 | 2.67 (0.0079) | 0.73 / 0.19 |
+| 4 | 3420-3795 (314) | 41.7% | 55.1% | (2,0,0) | -0.037 | -0.023 | -2.14 | 0.63 | 3.55 (4.5e-4) | 0.31 / 0.09 |
+| 5 | 3795-4174 (318) | 43.1% | 52.2% | (2,0,0) | 0.061 | 0.039 | -2.09 | 0.75 | 7.13 (6.9e-12) | 0.82 / 0.02 |
 
-The pooled gap comes from the two most recent folds, where the hybrid lost badly; in fold 5 the gate handed almost all weight to the neural branch (α ≈ 0.98). In folds 1-3 the hybrid is not distinguishable from ARIMA by DM.
+ARIMA's columns are identical to the previous run; the hybrid's are not (previous run, hybrid direction by fold: 49.4, 49.0, 51.9, 43.0, 43.1%). In both runs the gap is largest in the two most recent folds, and only fold 1 leaves the hybrid indistinguishable from ARIMA by DM in this run (folds 1-3 did in the previous one).
 
 ### History of this result
 
@@ -53,24 +65,29 @@ The pooled gap comes from the two most recent folds, where the hybrid lost badly
 | 5-fold walk-forward, extended data (naive AR input) | Real, through 2026-08-07 | Retrained per fold | 49.24% (775/1574) | 0.562 |
 | Single split, AR branch fixed | Real, through 2026-08-07 | Single split, test set | 44.52% | — |
 | Quarterly slices, 2024, AR-fixed checkpoint | Real, 2024 only | Served model on each calendar quarter (60-63 days each) | 42.75% avg (std 1.82%) | — |
-| **5-fold walk-forward, AR branch fixed** | **Real, through 2026-08-07** | **Retrained per fold** | **47.27% (744/1574)** | **0.032 (below 50%)** |
+| 5-fold walk-forward, AR branch fixed (2026-11-12) | Real, through 2026-08-07 | Retrained per fold | 47.27% (744/1574) | 0.032 (below 50%) |
+| **5-fold walk-forward, same code + cost metrics (2026-11-14)** | **Real, through 2026-08-07** | **Retrained per fold, same seed** | **45.81% (721/1574)** | **0.00095 (below 50%)** |
 
 Every run before 2026-11-12 used the naive AR input described above. The conclusion has not changed in any of them; fixing the branch made the hybrid slightly worse, not better.
 
 ## Regression accuracy and strategy performance (pooled across all 5 folds)
 
-| Metric | Hybrid (AR fixed) | Hybrid (previous run) | ARIMA(p,0,q) | Persistence |
+| Metric | Hybrid (2026-11-14) | Hybrid (2026-11-12) | ARIMA(p,0,q) | Persistence |
 |---|---|---|---|---|
-| RMSE | 0.012869 | 0.012856 | **0.012073** | 0.012131 |
-| MAE | 0.008682 | 0.008890 | 0.007864 | **0.007835** |
-| IC (Pearson corr, pred vs actual return) | 0.0238 | 0.0865 | **0.0832** | 0.0000 |
-| Sharpe of naive signal-following strategy | 0.023 | 0.362 | **1.039** | 0.000 |
+| RMSE | 0.012948 | 0.012869 | **0.012073** | 0.012131 |
+| MAE | 0.008728 | 0.008682 | 0.007864 | **0.007835** |
+| IC (Pearson corr, pred vs actual return) | 0.0051 | 0.0238 | **0.0832** | 0.0000 |
+| Sharpe of naive signal-following strategy, before costs | -0.694 | 0.023 | **1.039** | 0.000 |
+| Sharpe after 1 bp per unit of turnover | -0.711 | — | **0.918** | 0.000 |
+| Sharpe after 2 bps | -0.729 | — | **0.796** | 0.000 |
+| Sharpe after 5 bps | -0.781 | — | **0.433** | 0.000 |
+| Average daily turnover (Σ\|Δ position\|) | 0.13 | — | 0.92 | 0 |
 
-The Sharpe figures ignore transaction costs.
+**Transaction costs (added 2026-11-14).** The strategy holds `sign(forecast)` and is charged `bps × |position_t − position_{t−1}|` each day. ARIMA flips its position on most days (turnover 0.92/day), so costs bite: its Sharpe falls from 1.04 to 0.92 at 1 bp, 0.80 at 2 bps and 0.43 at 5 bps. At index-futures costs (around 1 bp) most of the edge survives; at retail costs it does not. These are still gross of slippage and financing, on one index, over one sample.
 
 **Diebold-Mariano test (squared-error loss, HLN small-sample correction):**
-- Hybrid vs ARIMA: DM = 3.966, **p = 7.6e-5** → ARIMA is significantly more accurate than the hybrid model (previous run: 4.077, p = 4.8e-5).
-- Hybrid vs persistence: DM = 3.486, **p = 5.0e-4** → persistence is significantly more accurate than the hybrid model (previous run: 3.056, p = 2.3e-3).
+- Hybrid vs ARIMA: DM = 4.381, **p = 1.3e-5** → ARIMA is significantly more accurate than the hybrid model (2026-11-12 run: 3.966, p = 7.6e-5).
+- Hybrid vs persistence: DM = 3.860, **p = 1.2e-4** → persistence is significantly more accurate than the hybrid model (2026-11-12 run: 3.486, p = 5.0e-4).
 
 **Interpretation:** the additional architectural complexity — a Transformer/LSTM encoder, a learned volatility-regime gate, an HMM regime detector — does not add predictive value on this data and hurts relative to a properly-selected univariate ARIMA. The only component with a statistically significant (if modest — IC≈0.08, ~53% direction) edge is the plain ARIMA baseline. This is consistent with near-efficiency at the one-day horizon for a heavily traded index, and with the tendency of flexible models to fit noise that a regularised linear model ignores.
 
@@ -78,17 +95,17 @@ The Sharpe figures ignore transaction costs.
 
 | Nominal interval | Empirical coverage | Gap | Previous run |
 |---|---|---|---|
-| 50% | 4.9% | -45.1pp | 4.0% |
-| 80% | 9.0% | -71.0pp | 7.8% |
-| 90% | 11.2% | -78.8pp | 9.6% |
+| 50% | 4.1% | -45.9pp | 4.9% |
+| 80% | 7.2% | -72.8pp | 9.0% |
+| 90% | 8.9% | -81.1pp | 11.2% |
 
-PIT histogram (10 bins): 527, 19, 13, 9, 17, 22, 26, 14, 25, 902 — U-shaped, i.e. outcomes fall outside the predicted distribution on both sides. Kolmogorov-Smirnov against Uniform(0,1) rejects calibration overwhelmingly (KS=0.532, p≈0, N=1574).
+PIT histogram (10 bins): 522, 20, 20, 8, 12, 24, 8, 10, 18, 932 — U-shaped, i.e. outcomes fall outside the predicted distribution on both sides. Kolmogorov-Smirnov against Uniform(0,1) rejects calibration overwhelmingly (KS=0.561, p≈0, N=1574).
 
-**The model's uncertainty estimates are severely overconfident** — its nominal "90% interval" contains the true outcome about 11% of the time. These MC-Dropout intervals must **not** be presented as calibrated uncertainty in any downstream use.
+**The model's uncertainty estimates are severely overconfident** — its nominal "90% interval" contains the true outcome about 9-11% of the time. These MC-Dropout intervals must **not** be presented as calibrated uncertainty in any downstream use.
 
 ## Gating mechanism (fusion gate health)
 
-The original audit found the gate frozen at α = 0.4650 ± 0.0002. In this run α_std per fold is 0.227, 0.195, 0.199, 0.140, 0.024 (previous run: 0.189, 0.134, 0.201, 0.137, 0.021), so the gate is not frozen. α_mean is 0.62-0.78 in folds 1-4 and 0.98 in fold 5: on the most recent data the gate hands almost all weight to the neural branch, which is where the hybrid does worst. (The frozen-gate symptom was tied to the legacy `HybridLoss`; `ProductionLoss` has an explicit gate-variance penalty.)
+The original audit found the gate frozen at α = 0.4650 ± 0.0002. In this run α_std per fold is 0.21, 0.25, 0.19, 0.09, 0.02 (2026-11-12 run: 0.23, 0.20, 0.20, 0.14, 0.02), so the gate is not frozen. α_mean is 0.76, 0.54, 0.73, 0.31, 0.82 (2026-11-12: 0.78, 0.62, 0.76, 0.71, 0.98): how much weight the gate gives the neural branch is itself one of the things that changes between seeded runs. (The frozen-gate symptom was tied to the legacy `HybridLoss`; `ProductionLoss` has an explicit gate-variance penalty.)
 
 ## Population Stability Index (input feature drift, per fold, reference = that fold's training window)
 
@@ -117,7 +134,7 @@ As a diagnostic (not part of the trading model), tested on S&P 500 close level v
 
 - Zero look-ahead bias, verified: `tests/test_walk_forward_boundaries.py` proves no train/test index overlap and no gaps across folds; `tests/test_regime.py` proves the HMM regime feature is causal (forward-filtered posteriors only) via future-perturbation tests; `tests/test_serving_parity.py` proves the AR forecast for row t uses nothing after t; scaler fit strictly on each fold's training split.
 - Real, working Pesaran bounds test, PSI drift monitoring, MC-Dropout calibration checking, and Diebold-Mariano significance testing — all unit-tested against known-answer synthetic cases.
-- The fusion gate is not frozen (α_std 0.02-0.23 across folds).
+- The fusion gate is not frozen (α_std 0.02-0.25 across folds).
 - The live API feeds the served model exactly the inputs the evaluated model was trained on (`tests/test_serving_parity.py`).
 
 ## Serving strategy (2026-08-10 update)
@@ -126,4 +143,4 @@ Per this report's own conclusion below, `serve_api.py`'s `/predict` endpoint no 
 
 ## Conclusion
 
-An honest negative result, now reached with the econometric branch working as described. Fixing it moved the hybrid from 49.24% to 47.27% direction accuracy and from IC 0.087 to 0.024; it did not change the conclusion. **Do not use the hybrid model for trading signals** — and `serve_api.py` does not: it serves ARIMA as the primary signal and returns the hybrid's forecast alongside, labelled. The one component with a small, statistically significant edge (ARIMA, ~53.4% direction, Sharpe ≈ 1.04 before costs) is worth isolated investigation, but that is a far more modest claim than the "68.7% accuracy" this repository once advertised.
+An honest negative result, now reached with the econometric branch working as described. Fixing it moved the hybrid from 49.24% to 47.27% direction accuracy and from IC 0.087 to 0.024, and a same-seed re-run gave 45.81% and IC 0.005; none of it changed the conclusion. **Do not use the hybrid model for trading signals** — and `serve_api.py` does not: it serves ARIMA as the primary signal and returns the hybrid's forecast alongside, labelled. The one component with a small, statistically significant edge (ARIMA, ~53.4% direction, Sharpe ≈ 1.04 before costs, 0.92 after 1 bp and 0.43 after 5 bps) is worth isolated investigation, but that is a far more modest claim than the "68.7% accuracy" this repository once advertised.

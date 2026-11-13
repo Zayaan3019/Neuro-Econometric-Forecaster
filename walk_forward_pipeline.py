@@ -189,6 +189,17 @@ def evaluate_fold(model, test_sc, test_close, test_ardl, feature_cols):
     return ds_test, preds, actuals, alphas, mc_samples
 
 
+#: One-way costs (bps of notional per unit of position change) at which the
+#: sign-following strategy is also scored. A flip from long to short is two
+#: units of turnover. ~1 bp is a liquid index future or ETF for a small
+#: account; 5 bp is a pessimistic retail round of spread plus fees.
+COST_BPS_GRID = (1.0, 2.0, 5.0)
+
+
+def _sharpe(rets: np.ndarray) -> float:
+    return float(np.sqrt(252) * rets.mean() / rets.std()) if rets.std() > 1e-9 else 0.0
+
+
 def compute_metrics(preds: np.ndarray, actuals: np.ndarray) -> dict:
     mse = float(np.mean((preds - actuals) ** 2))
     rmse = float(np.sqrt(mse))
@@ -201,13 +212,17 @@ def compute_metrics(preds: np.ndarray, actuals: np.ndarray) -> dict:
         ic = 0.0
     signals = np.sign(preds)
     strat_rets = signals * actuals
-    if strat_rets.std() > 1e-9:
-        sharpe = float(np.sqrt(252) * strat_rets.mean() / strat_rets.std())
-    else:
-        sharpe = 0.0
+    sharpe = _sharpe(strat_rets)
+    # Position change per day; the first day enters from flat.
+    turnover = np.abs(np.diff(np.concatenate([[0.0], signals])))
+    net = {
+        f"{bps:g}bps": _sharpe(strat_rets - turnover * bps / 1e4) for bps in COST_BPS_GRID
+    }
     return {
         "MSE": mse, "RMSE": rmse, "MAE": mae, "MAPE_pct": mape,
         "Directional_Accuracy": dir_acc, "IC": ic, "Sharpe_naive_signal_strategy": sharpe,
+        "Sharpe_net_of_costs": net,
+        "avg_daily_turnover": float(turnover.mean()),
         "N": int(len(actuals)),
     }
 
@@ -233,6 +248,7 @@ def main():
 
     fold_results = []
     pooled = {"hybrid": [], "actual": [], "persistence": [], "arima": [], "mc": []}
+    prediction_rows = []
 
     for k, (train_end, test_start, test_end) in enumerate(boundaries, start=1):
         log.info(f"\n{'=' * 70}\nFOLD {k}/{len(boundaries)}  train=[0:{train_end}]  test=[{test_start}:{test_end}]  (n_test={test_end - test_start})\n{'=' * 70}")
@@ -328,6 +344,21 @@ def main():
         fold_results.append(fold_result)
         log.info(f"FOLD {k} RESULT:\n" + json.dumps(fold_result, indent=2, default=str))
 
+        # Every scored day, so later analysis (costs, sub-periods, other
+        # baselines) never needs a 45-minute re-run. target_date is the day
+        # the predicted return is realised: close[target_date] / close[prev] - 1.
+        target_dates = test_close.index[n_seq + 1: len(test_close_arr)]
+        assert len(target_dates) == len(actuals), "prediction/date alignment mismatch"
+        prediction_rows.append(pd.DataFrame({
+            "fold": k,
+            "target_date": target_dates,
+            "actual_return": actuals,
+            "hybrid_pred": preds,
+            "arima_pred": arima_preds,
+            "persistence_pred": persistence_preds,
+            "gate_alpha": alphas,
+        }))
+
         pooled["hybrid"].append(preds)
         pooled["actual"].append(actuals)
         pooled["persistence"].append(persistence_preds)
@@ -382,6 +413,10 @@ def main():
             "calibration": pooled_calib,
         },
     }
+
+    pred_path = Config.MODEL_DIR / "walk_forward_predictions.csv"
+    pd.concat(prediction_rows, ignore_index=True).to_csv(pred_path, index=False)
+    log.info(f"Per-day predictions saved to {pred_path}")
 
     out_path = Config.MODEL_DIR / "walk_forward_report.json"
     with open(out_path, "w") as f:

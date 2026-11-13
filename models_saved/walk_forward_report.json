@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-12T19:52:53.617683",
+  "timestamp": "2026-11-14T01:46:53.251556",
   "data_source": "real Yahoo Finance ^GSPC + macro (VIX/TNX/FVX/IRX/DXY/GLD/TLT), 2010-01-01..2026-08-07",
   "n_folds": 5,
   "fold_boundaries": [
@@ -41,13 +41,19 @@
         0
       ],
       "hybrid_metrics": {
-        "MSE": 0.0003785109438467771,
-        "RMSE": 0.01945535771572389,
-        "MAE": 0.011220945976674557,
-        "MAPE_pct": 184.25238132476807,
-        "Directional_Accuracy": 0.49363057324840764,
-        "IC": 0.07684163746078912,
-        "Sharpe_naive_signal_strategy": 0.2336756873839917,
+        "MSE": 0.0003791860945057124,
+        "RMSE": 0.019472701263710496,
+        "MAE": 0.011156510561704636,
+        "MAPE_pct": 180.68987131118774,
+        "Directional_Accuracy": 0.5063694267515924,
+        "IC": 0.0673285952720888,
+        "Sharpe_naive_signal_strategy": 0.4449989176512473,
+        "Sharpe_net_of_costs": {
+          "1bps": 0.422114351611936,
+          "2bps": 0.39922469490141127,
+          "5bps": 0.33053384895673316
+        },
+        "avg_daily_turnover": 0.2770700636942675,
         "N": 314
       },
       "persistence_metrics": {
@@ -58,6 +64,12 @@
         "Directional_Accuracy": 0.0,
         "IC": 0.0,
         "Sharpe_naive_signal_strategy": 0.0,
+        "Sharpe_net_of_costs": {
+          "1bps": 0.0,
+          "2bps": 0.0,
+          "5bps": 0.0
+        },
+        "avg_daily_turnover": 0.0,
         "N": 314
       },
       "arima_metrics": {
@@ -68,23 +80,29 @@
         "Directional_Accuracy": 0.6146496815286624,
         "IC": 0.3539129467344315,
         "Sharpe_naive_signal_strategy": 2.200229496006779,
+        "Sharpe_net_of_costs": {
+          "1bps": 2.151217275198374,
+          "2bps": 2.1021041599719057,
+          "5bps": 1.954191020724142
+        },
+        "avg_daily_turnover": 0.6019108280254777,
         "N": 314
       },
       "dm_hybrid_vs_arima": {
-        "dm_statistic": 1.0643726719750122,
-        "p_value": 0.2879803235054108,
+        "dm_statistic": 1.0772543014210256,
+        "p_value": 0.2821962297724254,
         "n": 314,
-        "mean_loss_model1": 0.0003785108894298273,
+        "mean_loss_model1": 0.00037918612640777015,
         "mean_loss_model2": 0.00035676928156891987,
         "loss_function": "squared",
         "horizon": 1,
         "interpretation": "no significant difference in forecast accuracy"
       },
       "dm_hybrid_vs_persistence": {
-        "dm_statistic": 0.3839353410108918,
-        "p_value": 0.7012870506855458,
+        "dm_statistic": 0.40452961299774415,
+        "p_value": 0.6860996008752132,
         "n": 314,
-        "mean_loss_model1": 0.0003785108894298273,
+        "mean_loss_model1": 0.00037918612640777015,
         "mean_loss_model2": 0.0003696915555680176,
         "loss_function": "squared",
         "horizon": 1,
@@ -96,31 +114,31 @@
         "coverage": {
           "0.5": {
             "nominal": 0.5,
-            "empirical": 0.054140127388535034,
-            "gap": -0.445859872611465
+            "empirical": 0.050955414012738856,
+            "gap": -0.44904458598726116
           },
           "0.8": {
             "nominal": 0.8,
-            "empirical": 0.08598726114649681,
-            "gap": -0.7140127388535032
+            "empirical": 0.08280254777070063,
+            "gap": -0.7171974522292994
           },
           "0.9": {
             "nominal": 0.9,
-            "empirical": 0.10191082802547771,
-            "gap": -0.7980891719745223
+            "empirical": 0.09235668789808917,
+            "gap": -0.8076433121019109
           }
         },
         "pit_histogram_counts": [
-          123,
+          134,
           4,
-          1,
-          3,
-          2,
-          7,
           5,
           2,
-          4,
-          163
+          3,
+          7,
+          1,
+          2,
+          3,
+          153
         ],
         "pit_histogram_edges": [
           0.0,
@@ -136,10 +154,10 @@
           1.0
         ],
         "pit_ks_test": {
-          "ks_statistic": 0.5031847133757962,
-          "ks_pvalue": 4.146471181058011e-74
+          "ks_statistic": 0.46178343949044587,
+          "ks_pvalue": 8.308919154842828e-62
         },
-        "pred_std_mean": 0.0006439226563088596
+        "pred_std_mean": 0.0007181058754213154
       },
       "psi_n_alert": 16,
       "psi_n_moderate": 10,
@@ -171,8 +189,8 @@
           "status": "alert"
         }
       ],
-      "alpha_mean": 0.7802733182907104,
-      "alpha_std": 0.2268168032169342
+      "alpha_mean": 0.7570711970329285,
+      "alpha_std": 0.2085198163986206
     },
     {
       "fold": 2,
@@ -185,13 +203,19 @@
         0
       ],
       "hybrid_metrics": {
-        "MSE": 7.532317249570042e-05,
-        "RMSE": 0.00867889235419477,
-        "MAE": 0.006762879900634289,
-        "MAPE_pct": 173.96442890167236,
-        "Directional_Accuracy": 0.49044585987261147,
-        "IC": 0.10542909594285689,
-        "Sharpe_naive_signal_strategy": 0.9644477901460979,
+        "MSE": 7.995600026333705e-05,
+        "RMSE": 0.008941811911650627,
+        "MAE": 0.006921013351529837,
+        "MAPE_pct": 187.6278281211853,
+        "Directional_Accuracy": 0.4713375796178344,
+        "IC": 0.042370903220083724,
+        "Sharpe_naive_signal_strategy": -0.6172135764391243,
+        "Sharpe_net_of_costs": {
+          "1bps": -0.6661015668754237,
+          "2bps": -0.7148730103070572,
+          "5bps": -0.8604015918668209
+        },
+        "avg_daily_turnover": 0.2643312101910828,
         "N": 314
       },
       "persistence_metrics": {
@@ -202,6 +226,12 @@
         "Directional_Accuracy": 0.0,
         "IC": 0.0,
         "Sharpe_naive_signal_strategy": 0.0,
+        "Sharpe_net_of_costs": {
+          "1bps": 0.0,
+          "2bps": 0.0,
+          "5bps": 0.0
+        },
+        "avg_daily_turnover": 0.0,
         "N": 314
       },
       "arima_metrics": {
@@ -212,27 +242,33 @@
         "Directional_Accuracy": 0.5222929936305732,
         "IC": 0.04570192390383225,
         "Sharpe_naive_signal_strategy": 1.1764432055338432,
+        "Sharpe_net_of_costs": {
+          "1bps": 1.0743550357925544,
+          "2bps": 0.9721895386824121,
+          "5bps": 0.6655661923744518
+        },
+        "avg_daily_turnover": 0.5445859872611465,
         "N": 314
       },
       "dm_hybrid_vs_arima": {
-        "dm_statistic": 1.300469054046494,
-        "p_value": 0.1943969572990769,
+        "dm_statistic": 2.6045042746900586,
+        "p_value": 0.009639731968841492,
         "n": 314,
-        "mean_loss_model1": 7.532316919250632e-05,
+        "mean_loss_model1": 7.995599704311741e-05,
         "mean_loss_model2": 7.168484916653696e-05,
         "loss_function": "squared",
         "horizon": 1,
-        "interpretation": "no significant difference in forecast accuracy"
+        "interpretation": "model2 significantly more accurate"
       },
       "dm_hybrid_vs_persistence": {
-        "dm_statistic": 1.125683458483257,
-        "p_value": 0.26116191939175537,
+        "dm_statistic": 2.606125247722704,
+        "p_value": 0.009595213308442485,
         "n": 314,
-        "mean_loss_model1": 7.532316919250632e-05,
+        "mean_loss_model1": 7.995599704311741e-05,
         "mean_loss_model2": 7.232254982954038e-05,
         "loss_function": "squared",
         "horizon": 1,
-        "interpretation": "no significant difference in forecast accuracy"
+        "interpretation": "model2 significantly more accurate"
       },
       "calibration": {
         "n_predictions": 314,
@@ -240,31 +276,31 @@
         "coverage": {
           "0.5": {
             "nominal": 0.5,
-            "empirical": 0.04777070063694268,
-            "gap": -0.45222929936305734
+            "empirical": 0.03821656050955414,
+            "gap": -0.46178343949044587
           },
           "0.8": {
             "nominal": 0.8,
-            "empirical": 0.08917197452229299,
-            "gap": -0.7108280254777071
+            "empirical": 0.08598726114649681,
+            "gap": -0.7140127388535032
           },
           "0.9": {
             "nominal": 0.9,
-            "empirical": 0.12738853503184713,
-            "gap": -0.7726114649681529
+            "empirical": 0.11464968152866242,
+            "gap": -0.7853503184713376
           }
         },
         "pit_histogram_counts": [
-          98,
-          6,
-          4,
-          1,
-          4,
+          91,
+          3,
           2,
-          6,
+          2,
           3,
           4,
-          186
+          3,
+          3,
+          7,
+          196
         ],
         "pit_histogram_edges": [
           0.0,
@@ -280,10 +316,10 @@
           1.0
         ],
         "pit_ks_test": {
-          "ks_statistic": 0.5382165605095541,
-          "ks_pvalue": 1.2925630529705197e-85
+          "ks_statistic": 0.5796178343949044,
+          "ks_pvalue": 1.2652761113284612e-100
         },
-        "pred_std_mean": 0.0007242427091114223
+        "pred_std_mean": 0.0007111495942808688
       },
       "psi_n_alert": 15,
       "psi_n_moderate": 6,
@@ -315,8 +351,8 @@
           "status": "alert"
         }
       ],
-      "alpha_mean": 0.6230908036231995,
-      "alpha_std": 0.19483384490013123
+      "alpha_mean": 0.5421525239944458,
+      "alpha_std": 0.2504524290561676
     },
     {
       "fold": 3,
@@ -329,13 +365,19 @@
         0
       ],
       "hybrid_metrics": {
-        "MSE": 0.00019677056116051972,
-        "RMSE": 0.014027493046176131,
-        "MAE": 0.010431776754558086,
-        "MAPE_pct": 243.93088817596436,
-        "Directional_Accuracy": 0.5191082802547771,
-        "IC": 0.033980069167474695,
-        "Sharpe_naive_signal_strategy": 1.2419649402113377,
+        "MSE": 0.00020448389113880694,
+        "RMSE": 0.014299786401859537,
+        "MAE": 0.01073137391358614,
+        "MAPE_pct": 254.8166036605835,
+        "Directional_Accuracy": 0.46496815286624205,
+        "IC": -0.022914170801349432,
+        "Sharpe_naive_signal_strategy": -0.9046545499662652,
+        "Sharpe_net_of_costs": {
+          "1bps": -0.9138519800511921,
+          "2bps": -0.9230451942726674,
+          "5bps": -0.9505967872969371
+        },
+        "avg_daily_turnover": 0.0732484076433121,
         "N": 314
       },
       "persistence_metrics": {
@@ -346,6 +388,12 @@
         "Directional_Accuracy": 0.0,
         "IC": 0.0,
         "Sharpe_naive_signal_strategy": 0.0,
+        "Sharpe_net_of_costs": {
+          "1bps": 0.0,
+          "2bps": 0.0,
+          "5bps": 0.0
+        },
+        "avg_daily_turnover": 0.0,
         "N": 314
       },
       "arima_metrics": {
@@ -356,23 +404,29 @@
         "Directional_Accuracy": 0.46178343949044587,
         "IC": -0.012939195282044,
         "Sharpe_naive_signal_strategy": -0.000936011341407483,
+        "Sharpe_net_of_costs": {
+          "1bps": -0.14863449080931349,
+          "2bps": -0.29616318458332114,
+          "5bps": -0.7374822746971598
+        },
+        "avg_daily_turnover": 1.2006369426751593,
         "N": 314
       },
       "dm_hybrid_vs_arima": {
-        "dm_statistic": 1.9376113769227736,
-        "p_value": 0.05356996013410731,
+        "dm_statistic": 2.671997575030021,
+        "p_value": 0.007934873296277178,
         "n": 314,
-        "mean_loss_model1": 0.00019677055020936063,
+        "mean_loss_model1": 0.00020448388518276496,
         "mean_loss_model2": 0.0001718502255741665,
         "loss_function": "squared",
         "horizon": 1,
-        "interpretation": "no significant difference in forecast accuracy"
+        "interpretation": "model2 significantly more accurate"
       },
       "dm_hybrid_vs_persistence": {
-        "dm_statistic": 2.5762083136694036,
-        "p_value": 0.010447234174403297,
+        "dm_statistic": 3.442777141358704,
+        "p_value": 0.0006541176647494318,
         "n": 314,
-        "mean_loss_model1": 0.00019677055020936063,
+        "mean_loss_model1": 0.00020448388518276496,
         "mean_loss_model2": 0.00016634861779052913,
         "loss_function": "squared",
         "horizon": 1,
@@ -384,31 +438,31 @@
         "coverage": {
           "0.5": {
             "nominal": 0.5,
-            "empirical": 0.03184713375796178,
-            "gap": -0.4681528662420382
+            "empirical": 0.044585987261146494,
+            "gap": -0.4554140127388535
           },
           "0.8": {
             "nominal": 0.8,
-            "empirical": 0.06687898089171974,
-            "gap": -0.7331210191082803
+            "empirical": 0.08280254777070063,
+            "gap": -0.7171974522292994
           },
           "0.9": {
             "nominal": 0.9,
-            "empirical": 0.08598726114649681,
-            "gap": -0.8140127388535032
+            "empirical": 0.09554140127388536,
+            "gap": -0.8044585987261147
           }
         },
         "pit_histogram_counts": [
-          176,
+          161,
+          5,
+          6,
+          1,
+          2,
+          6,
+          1,
           2,
           5,
-          2,
-          3,
-          3,
-          1,
-          1,
-          5,
-          116
+          125
         ],
         "pit_histogram_edges": [
           0.0,
@@ -424,10 +478,10 @@
           1.0
         ],
         "pit_ks_test": {
-          "ks_statistic": 0.5318471337579618,
-          "ks_pvalue": 1.9139234104014724e-83
+          "ks_statistic": 0.49363057324840764,
+          "ks_pvalue": 3.780766411415609e-71
         },
-        "pred_std_mean": 0.0010862061753869057
+        "pred_std_mean": 0.0009783562272787094
       },
       "psi_n_alert": 27,
       "psi_n_moderate": 3,
@@ -459,8 +513,8 @@
           "status": "alert"
         }
       ],
-      "alpha_mean": 0.7560427784919739,
-      "alpha_std": 0.19904060661792755
+      "alpha_mean": 0.7252335548400879,
+      "alpha_std": 0.19020642340183258
     },
     {
       "fold": 4,
@@ -473,13 +527,19 @@
         0
       ],
       "hybrid_metrics": {
-        "MSE": 8.187223284039646e-05,
-        "RMSE": 0.009048327626716247,
-        "MAE": 0.007111981976777315,
-        "MAPE_pct": 482.06586837768555,
-        "Directional_Accuracy": 0.4299363057324841,
-        "IC": 0.007152048574491739,
-        "Sharpe_naive_signal_strategy": -1.2948532399845367,
+        "MSE": 7.729198114247993e-05,
+        "RMSE": 0.008791585814998334,
+        "MAE": 0.006747142411768436,
+        "MAPE_pct": 476.28774642944336,
+        "Directional_Accuracy": 0.4171974522292994,
+        "IC": -0.037087132053524555,
+        "Sharpe_naive_signal_strategy": -2.136075986665304,
+        "Sharpe_net_of_costs": {
+          "1bps": -2.149703919283974,
+          "2bps": -2.163290120759473,
+          "5bps": -2.2037884218150547
+        },
+        "avg_daily_turnover": 0.06687898089171974,
         "N": 314
       },
       "persistence_metrics": {
@@ -490,6 +550,12 @@
         "Directional_Accuracy": 0.0,
         "IC": 0.0,
         "Sharpe_naive_signal_strategy": 0.0,
+        "Sharpe_net_of_costs": {
+          "1bps": 0.0,
+          "2bps": 0.0,
+          "5bps": 0.0
+        },
+        "avg_daily_turnover": 0.0,
         "N": 314
       },
       "arima_metrics": {
@@ -500,23 +566,29 @@
         "Directional_Accuracy": 0.5509554140127388,
         "IC": -0.02287891513902653,
         "Sharpe_naive_signal_strategy": 0.6347561062932764,
+        "Sharpe_net_of_costs": {
+          "1bps": 0.4148492388132315,
+          "2bps": 0.19527900045283678,
+          "5bps": -0.4604076352284914
+        },
+        "avg_daily_turnover": 1.0987261146496816,
         "N": 314
       },
       "dm_hybrid_vs_arima": {
-        "dm_statistic": 4.387078329949893,
-        "p_value": 1.5719168694694474e-05,
+        "dm_statistic": 3.546769427516038,
+        "p_value": 0.00044963645100271066,
         "n": 314,
-        "mean_loss_model1": 8.187223025734729e-05,
+        "mean_loss_model1": 7.72919818286142e-05,
         "mean_loss_model2": 6.432500186724062e-05,
         "loss_function": "squared",
         "horizon": 1,
         "interpretation": "model2 significantly more accurate"
       },
       "dm_hybrid_vs_persistence": {
-        "dm_statistic": 5.655696193536214,
-        "p_value": 3.5013556720642214e-08,
+        "dm_statistic": 5.013142118066842,
+        "p_value": 8.980055883345273e-07,
         "n": 314,
-        "mean_loss_model1": 8.187223025734729e-05,
+        "mean_loss_model1": 7.72919818286142e-05,
         "mean_loss_model2": 6.3207132919452e-05,
         "loss_function": "squared",
         "horizon": 1,
@@ -528,31 +600,31 @@
         "coverage": {
           "0.5": {
             "nominal": 0.5,
-            "empirical": 0.04777070063694268,
-            "gap": -0.45222929936305734
+            "empirical": 0.01910828025477707,
+            "gap": -0.48089171974522293
           },
           "0.8": {
             "nominal": 0.8,
-            "empirical": 0.09872611464968153,
-            "gap": -0.7012738853503185
+            "empirical": 0.03503184713375796,
+            "gap": -0.7649681528662421
           },
           "0.9": {
             "nominal": 0.9,
-            "empirical": 0.1178343949044586,
-            "gap": -0.7821656050955414
+            "empirical": 0.054140127388535034,
+            "gap": -0.845859872611465
           }
         },
         "pit_histogram_counts": [
-          72,
-          2,
-          2,
-          1,
-          3,
-          3,
-          8,
+          75,
           4,
-          8,
-          211
+          4,
+          1,
+          1,
+          1,
+          0,
+          0,
+          3,
+          225
         ],
         "pit_histogram_edges": [
           0.0,
@@ -568,10 +640,10 @@
           1.0
         ],
         "pit_ks_test": {
-          "ks_statistic": 0.6210191082802548,
-          "ks_pvalue": 2.53511706136171e-117
+          "ks_statistic": 0.7006369426751593,
+          "ks_pvalue": 4.42860780127238e-155
         },
-        "pred_std_mean": 0.000941610662266612
+        "pred_std_mean": 0.0003166952228639275
       },
       "psi_n_alert": 19,
       "psi_n_moderate": 3,
@@ -603,8 +675,8 @@
           "status": "alert"
         }
       ],
-      "alpha_mean": 0.7051348090171814,
-      "alpha_std": 0.139754980802536
+      "alpha_mean": 0.30570176243782043,
+      "alpha_std": 0.09406711161136627
     },
     {
       "fold": 5,
@@ -617,13 +689,19 @@
         0
       ],
       "hybrid_metrics": {
-        "MSE": 9.64203427429311e-05,
-        "RMSE": 0.009819386067516192,
-        "MAE": 0.007890788838267326,
-        "MAPE_pct": 1931.4098358154297,
+        "MSE": 9.821840649237856e-05,
+        "RMSE": 0.009910519991018562,
+        "MAE": 0.008093628101050854,
+        "MAPE_pct": 2057.205390930176,
         "Directional_Accuracy": 0.4308176100628931,
-        "IC": -0.012231605631879899,
+        "IC": 0.061396999583764794,
         "Sharpe_naive_signal_strategy": -2.090850153831483,
+        "Sharpe_net_of_costs": {
+          "1bps": -2.091332645118768,
+          "2bps": -2.091814101521219,
+          "5bps": -2.0932520065706575
+        },
+        "avg_daily_turnover": 0.0031446540880503146,
         "N": 318
       },
       "persistence_metrics": {
@@ -634,6 +712,12 @@
         "Directional_Accuracy": 0.0,
         "IC": 0.0,
         "Sharpe_naive_signal_strategy": 0.0,
+        "Sharpe_net_of_costs": {
+          "1bps": 0.0,
+          "2bps": 0.0,
+          "5bps": 0.0
+        },
+        "avg_daily_turnover": 0.0,
         "N": 318
       },
       "arima_metrics": {
@@ -644,23 +728,29 @@
         "Directional_Accuracy": 0.5220125786163522,
         "IC": 0.038655542593638126,
         "Sharpe_naive_signal_strategy": 0.7493510466735116,
+        "Sharpe_net_of_costs": {
+          "1bps": 0.5217052997409378,
+          "2bps": 0.2945909798334707,
+          "5bps": -0.38259411691963463
+        },
+        "avg_daily_turnover": 1.1540880503144655,
         "N": 318
       },
       "dm_hybrid_vs_arima": {
-        "dm_statistic": 6.582454404653382,
-        "p_value": 1.9173640453118423e-10,
+        "dm_statistic": 7.129066846492404,
+        "p_value": 6.866951451911518e-12,
         "n": 318,
-        "mean_loss_model1": 9.642033947151232e-05,
+        "mean_loss_model1": 9.821840648084103e-05,
         "mean_loss_model2": 6.517483969283426e-05,
         "loss_function": "squared",
         "horizon": 1,
         "interpretation": "model2 significantly more accurate"
       },
       "dm_hybrid_vs_persistence": {
-        "dm_statistic": 7.4817711814616334,
-        "p_value": 7.274181257344026e-13,
+        "dm_statistic": 8.10695861123816,
+        "p_value": 1.1324274851176597e-14,
         "n": 318,
-        "mean_loss_model1": 9.642033947151232e-05,
+        "mean_loss_model1": 9.821840648084103e-05,
         "mean_loss_model2": 6.529032539649097e-05,
         "loss_function": "squared",
         "horizon": 1,
@@ -672,31 +762,31 @@
         "coverage": {
           "0.5": {
             "nominal": 0.5,
-            "empirical": 0.06289308176100629,
-            "gap": -0.4371069182389937
+            "empirical": 0.050314465408805034,
+            "gap": -0.449685534591195
           },
           "0.8": {
             "nominal": 0.8,
-            "empirical": 0.11006289308176101,
-            "gap": -0.6899371069182391
+            "empirical": 0.07547169811320754,
+            "gap": -0.7245283018867925
           },
           "0.9": {
             "nominal": 0.9,
-            "empirical": 0.1289308176100629,
-            "gap": -0.7710691823899372
+            "empirical": 0.0880503144654088,
+            "gap": -0.8119496855345912
           }
         },
         "pit_histogram_counts": [
-          58,
-          5,
-          1,
+          61,
+          4,
+          3,
           2,
-          5,
-          7,
+          3,
           6,
-          4,
-          4,
-          226
+          3,
+          3,
+          0,
+          233
         ],
         "pit_histogram_edges": [
           0.0,
@@ -712,10 +802,10 @@
           1.0
         ],
         "pit_ks_test": {
-          "ks_statistic": 0.6635220125786163,
-          "ks_pvalue": 3.4430187315284776e-138
+          "ks_statistic": 0.6886792452830188,
+          "ks_pvalue": 9.326446023018874e-151
         },
-        "pred_std_mean": 0.0010960851795971394
+        "pred_std_mean": 0.0008650435484014452
       },
       "psi_n_alert": 15,
       "psi_n_moderate": 6,
@@ -747,28 +837,34 @@
           "status": "alert"
         }
       ],
-      "alpha_mean": 0.9784504771232605,
-      "alpha_std": 0.023830298334360123
+      "alpha_mean": 0.8219988346099854,
+      "alpha_std": 0.024963973090052605
     }
   ],
   "pooled": {
     "n": 1574,
-    "n_correct_direction": 744,
-    "directional_accuracy": 0.4726810673443456,
-    "binomial_p_two_sided": 0.03212220957860997,
-    "binomial_p_one_sided_beat_50pct": 0.985858296030461,
+    "n_correct_direction": 721,
+    "directional_accuracy": 0.45806861499364676,
+    "binomial_p_two_sided": 0.0009542686226829084,
+    "binomial_p_one_sided_beat_50pct": 0.999601984533099,
     "accuracy_95pct_ci": [
-      0.4477697852044867,
-      0.4976944303836222
+      0.4332346728719758,
+      0.48305924470474726
     ],
     "hybrid_metrics": {
-      "MSE": 0.000165603167260997,
-      "RMSE": 0.01286868941504911,
-      "MAE": 0.008681660518050194,
-      "MAPE_pct": 606.500244140625,
-      "Directional_Accuracy": 0.4726810673443456,
-      "IC": 0.02376271921489154,
-      "Sharpe_naive_signal_strategy": 0.023437342615371205,
+      "MSE": 0.00016765037435106933,
+      "RMSE": 0.012947987270269821,
+      "MAE": 0.00872831605374813,
+      "MAPE_pct": 634.9490165710449,
+      "Directional_Accuracy": 0.45806861499364676,
+      "IC": 0.005068011196212284,
+      "Sharpe_naive_signal_strategy": -0.6935601778287245,
+      "Sharpe_net_of_costs": {
+        "1bps": -0.711143177465947,
+        "2bps": -0.7287149858733242,
+        "5bps": -0.7813543882627039
+      },
+      "avg_daily_turnover": 0.1340533672172808,
       "N": 1574
     },
     "persistence_metrics": {
@@ -779,6 +875,12 @@
       "Directional_Accuracy": 0.0,
       "IC": 0.0,
       "Sharpe_naive_signal_strategy": 0.0,
+      "Sharpe_net_of_costs": {
+        "1bps": 0.0,
+        "2bps": 0.0,
+        "5bps": 0.0
+      },
+      "avg_daily_turnover": 0.0,
       "N": 1574
     },
     "arima_metrics": {
@@ -789,23 +891,29 @@
       "Directional_Accuracy": 0.53430749682338,
       "IC": 0.08319873885828358,
       "Sharpe_naive_signal_strategy": 1.038841177166452,
+      "Sharpe_net_of_costs": {
+        "1bps": 0.9176297730398361,
+        "2bps": 0.7964052706807028,
+        "5bps": 0.43289951803957316
+      },
+      "avg_daily_turnover": 0.923125794155019,
       "N": 1574
     },
     "dm_hybrid_vs_arima": {
-      "dm_statistic": 3.9658294162332757,
-      "p_value": 7.642543567376592e-05,
+      "dm_statistic": 4.380716724484006,
+      "p_value": 1.2610910714805357e-05,
       "n": 1574,
-      "mean_loss_model1": 0.00016560317371404058,
+      "mean_loss_model1": 0.00016765038263409095,
       "mean_loss_model2": 0.00014575553843065856,
       "loss_function": "squared",
       "horizon": 1,
       "interpretation": "model2 significantly more accurate"
     },
     "dm_hybrid_vs_persistence": {
-      "dm_statistic": 3.485945116617526,
-      "p_value": 0.0005038746132750571,
+      "dm_statistic": 3.8603753664688276,
+      "p_value": 0.00011779648182663749,
       "n": 1574,
-      "mean_loss_model1": 0.00016560317371404058,
+      "mean_loss_model1": 0.00016765038263409095,
       "mean_loss_model2": 0.00014716344237220545,
       "loss_function": "squared",
       "horizon": 1,
@@ -817,31 +925,31 @@
       "coverage": {
         "0.5": {
           "nominal": 0.5,
-          "empirical": 0.04891994917407878,
-          "gap": -0.45108005082592123
+          "empirical": 0.04066073697585769,
+          "gap": -0.4593392630241423
         },
         "0.8": {
           "nominal": 0.8,
-          "empirical": 0.09021601016518424,
-          "gap": -0.7097839898348158
+          "empirical": 0.0724269377382465,
+          "gap": -0.7275730622617536
         },
         "0.9": {
           "nominal": 0.9,
-          "empirical": 0.11245235069885642,
-          "gap": -0.7875476493011436
+          "empirical": 0.08894536213468869,
+          "gap": -0.8110546378653113
         }
       },
       "pit_histogram_counts": [
-        527,
-        19,
-        13,
-        9,
-        17,
-        22,
-        26,
-        14,
-        25,
-        902
+        522,
+        20,
+        20,
+        8,
+        12,
+        24,
+        8,
+        10,
+        18,
+        932
       ],
       "pit_histogram_edges": [
         0.0,
@@ -857,10 +965,10 @@
         1.0
       ],
       "pit_ks_test": {
-        "ks_statistic": 0.5324015247776366,
+        "ks_statistic": 0.5609911054637866,
         "ks_pvalue": 0.0
       },
-      "pred_std_mean": 0.000898915808647871
+      "pred_std_mean": 0.0007182441768236458
     }
   }
 }
