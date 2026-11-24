@@ -21,17 +21,27 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# Upload and deploy run in separate jobs. In one job, deploy-pages can look
+# up the artifact a fraction of a second after it is finalized and find
+# nothing ("No artifacts named github-pages"); a re-run then fails on two
+# artifacts with that name (actions/deploy-pages#451). The job boundary
+# gives the lookup time to see the upload, as in GitHub's other starters.
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: frontend
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
