@@ -14,8 +14,9 @@ tuple -- that bug has been fixed too.
 
 IMPORTANT HONESTY NOTE: the walk-forward evaluation in this repository
 (see MODEL_EVALUATION_REPORT.md / models_saved/walk_forward_report.json)
-found NO statistically significant directional edge for this model on
-real S&P 500 data. This API is provided as a working reference
+found NO usable directional edge for this model on real S&P 500 data
+(45.4% direction accuracy, below a coin flip, and significantly less
+accurate than an ARIMA baseline by Diebold-Mariano). This API is provided as a working reference
 implementation of a real-time inference service, not as a claim that its
 predictions are profitable trading signals.
 """
@@ -400,8 +401,8 @@ def _response(request: "PredictionRequest", snap, f: Dict[str, Any]) -> "Predict
             f"Primary signal is the {primary_model} model, per this project's own "
             "walk-forward evaluation (see MODEL_EVALUATION_REPORT.md) -- not "
             "necessarily the more complex one. The hybrid model's directional "
-            "accuracy on real S&P 500 data was not statistically distinguishable "
-            "from 50%. Both predictions are returned for transparency. This is "
+            "accuracy on real S&P 500 data showed no usable edge (45.4% over 1574 "
+            "test days, below a coin flip). Both predictions are returned for transparency. This is "
             "research output, not a trading signal."
         ),
         data_as_of=str(snap.as_of.date()),

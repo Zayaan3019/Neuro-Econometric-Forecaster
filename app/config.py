@@ -66,7 +66,7 @@ class Config:
     # predicted_price/signal -- "hybrid" or "arima". Set from
     # MODEL_EVALUATION_REPORT.md's real walk-forward result, not defaulted to
     # the fancier model: that report found the hybrid model's directional
-    # accuracy was not statistically distinguishable from 50% and
+    # accuracy showed no usable edge (45.4%, below a coin flip) and was
     # significantly worse (Diebold-Mariano) than the plain ARIMA baseline, so
     # "arima" is the honest default here pending the extended-data re-run
     # (see refresh_real_data.py) confirming whether this still holds.
