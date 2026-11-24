@@ -26,7 +26,7 @@ from app.data.preprocessor import (
     TechnicalIndicatorEngine,
     Preprocessor,
 )
-from app.models.econometrics import ARDLModel, CointegrationTester, ARDLBoundsTest, EconometricPredictor
+from app.models.econometrics import ARDLModel, CointegrationTester, ARDLBoundsTest
 from app.models.neural import (
     PositionalEncoding,
     TransformerBlock,
@@ -357,7 +357,9 @@ class TestNeuroEconometricNet:
 class TestIntegration:
     def test_data_to_model_pipeline(self, sample_ohlcv_data):
         preprocessor = Preprocessor()
-        processed_df, metadata = preprocessor.fit_transform(sample_ohlcv_data)
+        processed_df, metadata = preprocessor.fit_transform(
+            sample_ohlcv_data, fit_rows=int(len(sample_ohlcv_data) * 0.7)
+        )
         assert not processed_df.isna().any().any()
 
         seq_len = 60

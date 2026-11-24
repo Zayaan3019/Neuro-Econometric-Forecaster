@@ -2,9 +2,15 @@
 Scenario-Based Market Condition Testing.
 
 Evaluates the trained model's directional accuracy separately on each
-calendar quarter of 2024, using REAL S&P 500 data and the CURRENT model
-architecture/checkpoint (models_saved/best_model_v2.pt, produced by
-run_pipeline.py / walk_forward_pipeline.py).
+calendar quarter of its HELD-OUT test period, using REAL S&P 500 data and the
+CURRENT checkpoint (models_saved/best_model_v2.pt, produced by run_pipeline.py).
+
+Only rows the checkpoint never saw are scored: rows >= val_end of
+run_pipeline.split_bounds. Until 2026-11-24 this script scored the four
+calendar quarters of 2024, but the checkpoint's validation split (used for
+early stopping, i.e. for choosing the checkpoint) ran to 2024-02-07, so most
+of "Q1 2024" was not out-of-sample. Quarters are now derived from the split,
+and a quarter is clipped to its held-out rows.
 
 A prior version of this file loaded the OLD, architecturally incompatible
 checkpoint (models_saved/best_model.pt) and crashed with a state_dict
@@ -29,7 +35,9 @@ import pytest
 from sklearn.preprocessing import StandardScaler
 
 from app.config import Config
-from run_pipeline import load_ohlcv, load_macro, engineer_features, precompute_ardl_predictions, MarketDataset
+from run_pipeline import (
+    load_ohlcv, load_macro, engineer_features, precompute_ardl_predictions, MarketDataset, split_bounds,
+)
 from app.models.fusion import NeuroEconometricNet
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -70,10 +78,12 @@ def evaluate_on_period(model, scaler, feature_cols, full_df, ohlcv, ardl_preds, 
     """
     n_seq = Config.SEQ_LENGTH
     ctx_start = max(0, start_idx - n_seq)
-    window_df = full_df.iloc[ctx_start:end_idx].copy()
+    # One row past the period so its last day has a next-day return to score.
+    stop = min(end_idx + 1, len(full_df))
+    window_df = full_df.iloc[ctx_start:stop].copy()
     window_df[feature_cols] = scaler.transform(window_df[feature_cols].values)
-    window_close = ohlcv["Close"].iloc[ctx_start:end_idx]
-    window_ardl = ardl_preds.iloc[ctx_start:end_idx]
+    window_close = ohlcv["Close"].iloc[ctx_start:stop]
+    window_ardl = ardl_preds.iloc[ctx_start:stop]
 
     ds = MarketDataset(window_df, window_close, window_ardl, feature_cols=feature_cols, seq_len=n_seq)
     if len(ds) == 0:
@@ -108,7 +118,7 @@ def evaluate_on_period(model, scaler, feature_cols, full_df, ohlcv, ardl_preds, 
 
 @pytest.mark.skipif(not CHECKPOINT_PATH.exists(), reason="best_model_v2.pt not present (run run_pipeline.py first)")
 def test_different_market_conditions():
-    """Evaluate the current model separately on each 2024 quarter of real S&P 500 data."""
+    """Evaluate the checkpoint on each calendar quarter of its held-out test split."""
     model, scaler, feature_cols = load_current_model()
 
     ohlcv = load_ohlcv()
@@ -121,25 +131,22 @@ def test_different_market_conditions():
 
     ardl_preds = precompute_ardl_predictions(full_df["Close"], window=Config.ARDL_WINDOW, lags=Config.ARDL_LAGS)
 
-    quarters = [
-        ("2024-01-01", "2024-03-31", "Q1 2024"),
-        ("2024-04-01", "2024-06-30", "Q2 2024"),
-        ("2024-07-01", "2024-09-30", "Q3 2024"),
-        ("2024-10-01", "2024-12-31", "Q4 2024"),
-    ]
+    _, val_end = split_bounds(len(full_df))
+    held_out = full_df.index[val_end:]
+    logger.info(f"Held-out test period: {held_out[0].date()} -> {held_out[-1].date()} ({len(held_out)} rows)")
 
     results = []
-    for start_date, end_date, period_name in quarters:
-        mask = (full_df.index >= start_date) & (full_df.index <= end_date)
-        idx = np.where(mask)[0]
-        if len(idx) < 10:
-            logger.warning(f"Skipping {period_name}: insufficient data in range")
+    for quarter, rows in pd.Series(np.arange(val_end, len(full_df)), index=held_out).groupby(held_out.to_period("Q")):
+        if len(rows) < 10:
+            logger.warning(f"Skipping {quarter}: only {len(rows)} held-out rows")
             continue
         result = evaluate_on_period(
             model, scaler, feature_cols, full_df, ohlcv, ardl_preds,
-            idx[0], idx[-1] + 1, period_name,
+            int(rows.iloc[0]), int(rows.iloc[-1]) + 1, str(quarter),
         )
         if result:
+            result["first_date"] = str(held_out[rows.iloc[0] - val_end].date())
+            result["last_date"] = str(held_out[rows.iloc[-1] - val_end].date())
             results.append(result)
 
     assert len(results) > 0, "No quarters produced results -- data or checkpoint mismatch"
@@ -154,6 +161,7 @@ def test_different_market_conditions():
 
     output = {
         "timestamp": datetime.now().isoformat(),
+        "held_out_from": str(held_out[0].date()),
         "periods": results,
         "summary": {
             "avg_directional_accuracy": avg_dir_accuracy,

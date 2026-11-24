@@ -290,7 +290,10 @@ def _ar_next_close_or_naive(close_values: np.ndarray, t: int) -> float:
     """Training's per-row rule: the AR forecast, or the last close on a numerical failure."""
     try:
         return ar_next_close(close_values, t, Config.ARDL_WINDOW, Config.ARDL_LAGS)
-    except (ValueError, np.linalg.LinAlgError):
+    except (ValueError, np.linalg.LinAlgError) as e:
+        # Same rule as training (needed for parity), but never silent: a naive
+        # input is how the AR branch hid for its whole history (audit defect 8).
+        logger.warning(f"AR fit failed at row {t} ({e}); hybrid AR input is the naive last close")
         return float(close_values[t])
 
 

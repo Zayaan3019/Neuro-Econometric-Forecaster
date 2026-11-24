@@ -4,7 +4,7 @@ A hybrid forecasting research harness that fuses econometrics (ARDL / bounds-tes
 
 **Live:** https://zayaan3019.github.io/Neuro-Econometric-Forecaster/ (static page on GitHub Pages; the API is a container-image AWS Lambda behind a function URL). Each forecast is made from the latest *completed* S&P 500 session and says which one: the bundled history is extended at request time with the daily bars published since. The first request after an idle period takes 1-2 minutes while the container starts and the ARIMA order search runs; later ones return in seconds.
 
-**This README makes no performance claim that isn't backed by a number in [`MODEL_EVALUATION_REPORT.md`](MODEL_EVALUATION_REPORT.md), which is reproducible by rerunning `python walk_forward_pipeline.py` (ARIMA and persistence exactly; the hybrid's retrain varies by a few points between seeded runs, see the report).** The honest headline, on real S&P 500 data from 2010-01-04 to 2026-08-07 under a 5-fold rolling walk-forward evaluation: the hybrid model has **no directional edge** (**45.81%** accuracy, 721 of N=1574, two-sided p=0.00095; 47.27% on the previous run; *below* a coin, which is not a usable signal in reverse) and is **significantly less accurate** by Diebold-Mariano than both an order-selected ARIMA baseline (53.43% direction; DM=4.38, p=1.3e-5) and a predict-zero persistence baseline (DM=3.86, p=1.2e-4). ARIMA's naive strategy Sharpe is 1.04 before costs and **0.92 / 0.80 / 0.43 after 1 / 2 / 5 bps** per unit of turnover. Every test-day prediction is saved in `models_saved/walk_forward_predictions.csv`. That negative result, and how it was reached, is the actual deliverable here. These numbers are from the 2026-11-12 re-run after fixing a defect that had made the AR(5) branch silently return the previous close on every row (see the report); every earlier run, including 49.24% (N=1574) and 48.21% (N=1394), reached the same conclusion and is kept in the report for comparison. Because of it, the live API serves the ARIMA forecast as its primary signal and returns the hybrid's forecast alongside, labelled.
+**This README makes no performance claim that isn't backed by a number in [`MODEL_EVALUATION_REPORT.md`](MODEL_EVALUATION_REPORT.md), which is reproducible by rerunning `python walk_forward_pipeline.py` (ARIMA and persistence exactly; the hybrid's retrain varies by a few points between seeded runs, see the report).** The honest headline, on real S&P 500 data from 2010-01-04 to 2026-08-07 under a 5-fold rolling walk-forward evaluation: the hybrid model has **no directional edge** (**45.36%** accuracy, 714 of N=1574, two-sided p=0.00025; 45.81% and 47.27% on the two previous runs; *below* a coin, which is not a usable signal in reverse) and is **significantly less accurate** by Diebold-Mariano than both an order-selected ARIMA baseline (53.43% direction; DM=3.32, p=9.1e-4) and a predict-zero persistence baseline (DM=2.78, p=0.0055). ARIMA's naive strategy Sharpe is 1.04 before costs and **0.92 / 0.80 / 0.43 after 1 / 2 / 5 bps** per unit of turnover. Every test-day prediction is saved in `models_saved/walk_forward_predictions.csv`. That negative result, and how it was reached, is the actual deliverable here. These numbers are from the 2026-11-24 re-run, after a second audit removed a backward fill (and an RSI seed) that let early training rows see later prices; the 2026-11-12 run before it fixed a defect that had made the AR(5) branch silently return the previous close on every row (see the report). Every earlier run, including 49.24% (N=1574) and 48.21% (N=1394), reached the same conclusion and is kept in the report for comparison. Because of it, the live API serves the ARIMA forecast as its primary signal and returns the hybrid's forecast alongside, labelled.
 
 ---
 
@@ -14,9 +14,11 @@ Not "68.7% directional accuracy" (an earlier version of this README claimed that
 
 - **A causally-correct HMM regime detector.** Forward-filtered posteriors only (`P(state_t | obs_1..t)`) — never Viterbi decoding or forward-backward smoothing, both of which leak future information into a "what regime were we in at time t" feature. Proven, not assumed: `tests/test_regime.py` perturbs future observations and asserts the filtered posteriors for the past are unchanged (to within 1e-10).
 - **A genuine Pesaran-Shin-Smith ARDL bounds test**, with AIC/BIC-selected lag order (not a fixed constant) and real asymptotic critical values, replacing a placeholder that previously always returned `(False, 0.0, "requires manual interpretation")` without running anything.
-- **MC-Dropout uncertainty that is actually calibration-checked**, not assumed calibrated. On this model, it isn't (nominal 90% intervals cover about 11% of outcomes) — that's reported directly rather than hidden.
+- **MC-Dropout uncertainty that is actually calibration-checked**, not assumed calibrated. On this model, it isn't (nominal 90% intervals cover about 10% of outcomes) — that's reported directly rather than hidden.
 - **Population Stability Index drift monitoring** on input features with an explicitly justified bucket count and alert threshold (see `app/monitoring/psi.py` docstring), not a copied "0.2" convention.
 - **A true rolling walk-forward evaluation**: 5 expanding-window folds, the model retrained from scratch each fold, evaluated only on the immediately following unseen block. Zero train/test index overlap, verified by `tests/test_walk_forward_boundaries.py`.
+- **Causal features, proven rather than assumed:** `tests/test_feature_causality.py` changes every price and macro value from row k on and requires every earlier row's features to be bit-identical.
+- **No silent fallbacks:** a failed AR fit, ARDL forecast, bounds test, ADF or cointegration test raises instead of returning a plausible default (`tests/test_no_silent_fallbacks.py`); the AR branch raises if more than 1% of its fits fall back.
 - **A Diebold-Mariano significance test** comparing the hybrid model against an ARIMA baseline and a persistence baseline on identical scored timestamps — not just eyeballed RMSE.
 
 ---
@@ -129,7 +131,7 @@ pytest tests/ test_market_conditions.py -v
 
 ## Testing
 
-73 pytest tests across 10 files, all currently passing (`pytest tests/ test_market_conditions.py -q` → `73 passed`):
+93 pytest tests across 13 files, all currently passing (`pytest tests/ test_market_conditions.py -q` → `93 passed`):
 
 | File | Covers |
 |---|---|
@@ -142,15 +144,21 @@ pytest tests/ test_market_conditions.py -v
 | `tests/test_regression_phase1_bug.py` | Locks in the fix for the original train/eval target-mismatch bug so it can't silently regress |
 | `tests/test_serving_parity.py` | The live API's model inputs equal the training dataset's for the same row; the AR forecast for row t uses nothing after t, targets close[t+1], and is a fitted forecast rather than the naive fallback |
 | `tests/test_live_market.py` | Live data refresh: only bars after the bundled end are appended, today's bar is held back until the session is final, null bars are skipped, an upstream failure serves bundled data and says so, a failed macro series is named, the snapshot is cached within its TTL, weekends are skipped |
-| `test_market_conditions.py` | Real 2024-quarter-by-quarter evaluation on the current model/checkpoint |
+| `tests/test_feature_causality.py` | **Causality of every engineered feature**: change all prices and macro values from row k on, require rows before k to be bit-identical (caught a backward fill and an RSI seed that read later prices); the legacy `Preprocessor` fits only on the rows it is told are training rows |
+| `tests/test_no_silent_fallbacks.py` | A failed ARDL forecast, bounds test, ADF or cointegration test raises instead of returning a plausible default (naive forecast, p = 1, F = 0) |
+| `test_market_conditions.py` | Quarter-by-quarter evaluation of the served checkpoint, on its held-out test rows only |
 
-`test_model_robustness.py` is a legacy diagnostic script (prediction consistency / noise robustness / alpha-gating checks) whose checkpoint loading was fixed to the current format but which has not been fully migrated to the current returns-based methodology or converted into pytest tests — treat it as informational, not part of the verified suite above.
+`bounds_test_diagnostic.py` reproduces the ARDL bounds test quoted in the evaluation report and writes `models_saved/bounds_test.json`.
+
+The legacy `test_model_robustness.py` was removed on 2026-11-24. It could not run (it loaded a checkpoint that no longer exists, and its catch-all `except` turned that into a 0% pass rate), and its method repeated three audited defects: a scaler fit on the test data, a hard-coded volatility input and a price-level "target".
 
 ---
 
 ## Known limitations (stated, not hidden)
 
-- **No directional edge** for the hybrid model on daily S&P 500 returns (45.81-47.27% across two seeded runs, below 50%; see headline result above). Do not use this for live trading signal generation.
+- **No directional edge** for the hybrid model on daily S&P 500 returns (45.36-47.27% across three runs, below 50%; see headline result above).
+- **The gate nearly collapses in the three most recent folds** (α std 0.0015-0.009; α ≈ 0.99 in folds 4-5, i.e. the neural branch alone). The per-day gate hypothesis is not supported on this data.
+- **The hybrid's retrain is not bit-reproducible** despite seeding (the direction accuracy moves by up to 2 points between runs); ARIMA and persistence reproduce exactly. Do not use this for live trading signal generation.
 - **MC-Dropout uncertainty on this model is not calibrated** (empirical coverage far below nominal) — don't present its intervals as real confidence bounds.
 - **ARDL long-run coefficient significance is weak** even where the joint bounds-test F-statistic rejects H0 — read as suggestive, not precise.
 - **`OBV` (On-Balance Volume) shows large PSI drift in every walk-forward fold** as an artifact of being an unbounded cumulative series, not a real signal change — a candidate for differencing or removal.
@@ -170,7 +178,9 @@ This repository was audited end-to-end (see conversation record / `verify_phase1
 4. **A non-causal "directional accuracy" loss term** (`sign(value - batch_mean)` instead of a true sign-of-return) in the legacy training loop — the current loss (`ProductionLoss` in `run_pipeline.py`) uses IC/sign-of-return directly.
 5. **A placeholder ARDL bounds test** that always returned a hardcoded "not implemented" result — replaced with a real Pesaran-Shin-Smith test.
 6. **A broken serving API** (loaded the incompatible legacy checkpoint, called the model as if it returned one tensor instead of a 3-tuple) — fixed and verified end-to-end.
-7. **Multiple documents with fabricated, unreproduced performance numbers** (68.7% accuracy / 1.87 Sharpe in the old README; 52.93% in a since-removed `PROJECT_COMPLETION.md`; "32.84% → 65-75%" in a since-removed `FIX_SUMMARY.md`) — removed. Every number in this README and in `MODEL_EVALUATION_REPORT.md` is reproducible by rerunning `walk_forward_pipeline.py`.
+7. **Multiple documents with fabricated, unreproduced performance numbers** (68.7% accuracy / 1.87 Sharpe in the old README; 52.93% in a since-removed `PROJECT_COMPLETION.md`; "32.84% → 65-75%" in a since-removed `FIX_SUMMARY.md`) — removed. Every number in this README and in `MODEL_EVALUATION_REPORT.md` is reproducible by rerunning `walk_forward_pipeline.py` (or `bounds_test_diagnostic.py` for the bounds test).
+8. **The AR(5) branch never ran** (`AutoReg.fit(disp=False)` raised `TypeError`, a bare `except` substituted the last close on every row), and **the live API built its inputs differently from training** — both found 2026-11-12 by a serving-parity test, fixed, and the evaluation re-run.
+9. **Second audit, 2026-11-24.** A backward fill in feature engineering (and an RSI seed) let early training rows see later prices — test rows and served inputs were unaffected, but the evaluation was re-run on the fixed features. The same audit removed the remaining copies of the patterns above outside the evaluated path: silent fallbacks in the ARDL/cointegration code, a bounds test that returned `(None, 0.0)` on failure, an unbacked F-statistic (now reproduced by `bounds_test_diagnostic.py`), a legacy scaler that fit on any data it was given, a quarterly evaluation that overlapped the checkpoint's validation split, and an unrunnable legacy script. Details at the top of `MODEL_EVALUATION_REPORT.md`.
 
 ---
 

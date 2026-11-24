@@ -1,5 +1,10 @@
 """
-Fusion Network: Gated blend of the ARDL branch and the Neural branch.
+Fusion Network: gated blend of the AR(5) econometric branch and the neural branch.
+
+The econometric input is a rolling AR(5) forecast of the next close, computed
+outside the network (run_pipeline.precompute_ardl_predictions; "ardl" in that
+name and in `ardl_predictions` below is historical). ARIMA is a separate
+baseline and the ARDL bounds test a separate diagnostic; neither feeds the gate.
 
 Critical fix applied: the previous code ran neural_branch.forward() AND
 neural_branch.extract_representation() as two separate calls, effectively
@@ -18,7 +23,6 @@ import logging
 
 from app.config import Config
 from app.models.neural import HybridNeuralEncoder, VolatilityRegimeDetector
-from app.models.econometrics import EconometricPredictor
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +33,10 @@ class GatedFusionMechanism(nn.Module):
 
         α = σ(W · [latent_state ‖ volatility_regime ‖ sentiment] + b)
 
-        final = α · Y_neural + (1-α) · Y_ardl
+        final = α · Y_neural + (1-α) · Y_AR
 
     α → 1 : trust the neural branch  (non-linear / turbulent regime)
-    α → 0 : trust ARDL               (linear / quiet regime)
+    α → 0 : trust the AR(5) branch   (linear / quiet regime)
 
     The gate is initialised so that α ≈ 0.5 at the start of training,
     which prevents the gate from being frozen near 0 or 1.
@@ -73,7 +77,7 @@ class NeuroEconometricNet(nn.Module):
         1. latent, Y_neural = NeuralBranch(x)          ← one pass only
         2. vol_regime       = VolatilityDetector(v)
         3. α                = FusionGate(latent, vol, sent)
-        4. Y_fused          = α·Y_neural + (1-α)·Y_ardl
+        4. Y_fused          = α·Y_neural + (1-α)·Y_AR   (AR(5) forecast, an input)
         5. Y_out            = OutputLayer(Y_fused)
     """
 
@@ -84,7 +88,6 @@ class NeuroEconometricNet(nn.Module):
         nhead: int = Config.NHEAD,
         num_lstm_layers: int = Config.NUM_LAYERS,
         dropout: float = Config.DROPOUT,
-        ardl_lags: int = Config.ARDL_LAGS,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -96,8 +99,6 @@ class NeuroEconometricNet(nn.Module):
             num_lstm_layers=num_lstm_layers,
             dropout=dropout,
         )
-
-        self.ardl_predictor = EconometricPredictor(lags=ardl_lags)
 
         self.volatility_detector = VolatilityRegimeDetector(input_dim=5, hidden_dim=32)
 
@@ -114,7 +115,7 @@ class NeuroEconometricNet(nn.Module):
     def forward(
         self,
         x: torch.Tensor,               # (B, seq_len, input_dim)
-        ardl_predictions: torch.Tensor, # (B, 1)
+        ardl_predictions: torch.Tensor, # (B, 1) the rolling AR(5) forecast
         volatility_features: torch.Tensor, # (B, 5)
         sentiment_scores: torch.Tensor, # (B, 1)
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -135,23 +136,3 @@ class NeuroEconometricNet(nn.Module):
         fused = self.output_layer(fused)
 
         return fused, alpha, neural_prediction
-
-
-class HybridTrainingWrapper:
-    """Utility wrapper — computes ARDL predictions on a price history."""
-
-    def __init__(self, model: NeuroEconometricNet, device: torch.device = Config.DEVICE):
-        self.model = model.to(device)
-        self.device = device
-
-    def compute_ardl_predictions(
-        self, target_series: pd.Series, horizon: int = 1
-    ) -> torch.Tensor:
-        try:
-            preds, _ = self.model.ardl_predictor.fit_predict(
-                target=target_series, horizon=horizon
-            )
-            return torch.tensor(preds, dtype=torch.float32).unsqueeze(1).to(self.device)
-        except Exception as e:
-            logger.warning(f"ARDL failed ({e}), using zero prediction.")
-            return torch.zeros(1, 1, device=self.device)

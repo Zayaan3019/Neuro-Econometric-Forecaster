@@ -240,8 +240,13 @@ def engineer_features(ohlcv: pd.DataFrame, macro: pd.DataFrame) -> pd.DataFrame:
                  "Dividends", "Stock Splits", "Adj Close"]
     df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
 
-    # ── Forward/backward fill then clip ──────────────────────────
-    df = df.ffill().bfill()
+    # ── Fill gaps without looking ahead ──────────────────────────
+    # Forward fill carries the last known value. What is left is each
+    # column's warm-up (e.g. the first 199 rows of sma200_ratio), which is
+    # set to 0: "no change" / "price at its average", using no future data.
+    # This was ffill().bfill() until 2026-11-24; the backward fill copied
+    # 2010-10-18's sma200_ratio over Jan-Oct 2010 (tests/test_feature_causality.py).
+    df = df.ffill()
     df = df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     n_feat = len([c for c in df.columns if c != "Close"])
@@ -316,6 +321,21 @@ def precompute_ardl_predictions(
     series = pd.Series(preds, index=close.index, name="ardl_pred")
     log.info(f"  AR forecasts ready: {series.notna().sum()} of {len(series)} rows, {fallbacks} numerical fallbacks")
     return series
+
+#: Single-split fractions for run_pipeline.py's train / validation / test.
+TRAIN_FRAC = 0.70
+VAL_END_FRAC = 0.85
+
+
+def split_bounds(n: int) -> Tuple[int, int]:
+    """(train_end, val_end) row indices of the 70 / 15 / 15 single split.
+
+    Rows >= val_end are the only rows the saved checkpoint has never seen,
+    either in training or in early stopping. Anything that scores the
+    checkpoint (test_market_conditions.py) must stay inside them.
+    """
+    return int(n * TRAIN_FRAC), int(n * VAL_END_FRAC)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. FEATURE NORMALISATION (StandardScaler per split — no leakage)
@@ -432,10 +452,13 @@ class ProductionLoss(nn.Module):
     IC directly measures forecasting skill and is used universally in
     quantitative finance.  All other terms are secondary regularisers.
 
-        L = IC_loss         – maximise correlation (primary)
-          + 0.3 · MSE_norm  – scale-invariant magnitude accuracy
-          + 0.05 · ARDL_agr – soft prior toward econometric branch
-          + 0.1 · gate_reg  – penalise frozen gate (variance too low)
+        L = 1.0  · (1 − IC)                   – maximise correlation (primary)
+          + 0.5  · 5000 · mean((pred − y)²)    – magnitude accuracy
+          + 0.1  · 2500 · mean((pred − AR)²)   – soft prior toward the AR(5) branch
+          + 0.15 · exp(−100 · var(α))          – penalise a frozen gate
+
+    (These are the weights the code below applies. An earlier version of this
+    docstring listed 0.3 / 0.05 / 0.1, which the code never used.)
 
     Gate regulariser: exp(−100·var(α))
         → ≈ 1.0 when gate is frozen (var → 0)
@@ -743,8 +766,7 @@ def main():
 
     # ── 4. Train / val / test split (70 / 15 / 15) ───────────────
     n = len(full_df)
-    train_end = int(n * 0.70)
-    val_end   = int(n * 0.85)
+    train_end, val_end = split_bounds(n)
 
     train_df  = full_df.iloc[:train_end]
     val_df    = full_df.iloc[train_end:val_end]

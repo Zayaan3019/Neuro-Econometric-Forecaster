@@ -1,0 +1,75 @@
+{
+  "report_sample_through_2024": {
+    "first_date": "2021-10-26",
+    "last_date": "2024-12-31",
+    "n": 800,
+    "f_statistic": 7.035086566621857,
+    "selected_order": [
+      1,
+      2
+    ],
+    "upper_bound_5pct": 4.8116858,
+    "upper_bound_1pct": 6.3220548,
+    "lower_bound_5pct": 3.8022629,
+    "decision_at_5pct": "reject H0 (long-run relationship)",
+    "valid": true,
+    "integration_orders": {
+      "endog": {
+        "order": "I(1)",
+        "adf_level_p": 0.9479792251635634,
+        "adf_diff_p": 0.0
+      },
+      "VIX": {
+        "order": "I(0)",
+        "adf_level_p": 0.002743813311288545,
+        "adf_diff_p": null
+      }
+    },
+    "error_correction_speed": -0.0016368080498111168,
+    "long_run_coefficients": {
+      "const": -15573.77726169275,
+      "Close": 1.0,
+      "VIX": 512.6329143397052
+    }
+  },
+  "latest_800_sessions": {
+    "first_date": "2023-05-31",
+    "last_date": "2026-08-07",
+    "n": 800,
+    "f_statistic": 5.552257600670535,
+    "selected_order": [
+      1,
+      1
+    ],
+    "upper_bound_5pct": 4.8116858,
+    "upper_bound_1pct": 6.3220548,
+    "lower_bound_5pct": 3.8022629,
+    "decision_at_5pct": "reject H0 (long-run relationship)",
+    "valid": true,
+    "integration_orders": {
+      "endog": {
+        "order": "I(1)",
+        "adf_level_p": 0.9419910118938044,
+        "adf_diff_p": 2.1254844857678975e-28
+      },
+      "VIX": {
+        "order": "I(0)",
+        "adf_level_p": 2.3212970170522393e-06,
+        "adf_diff_p": null
+      }
+    },
+    "error_correction_speed": 0.0013214483339165537,
+    "long_run_coefficients": {
+      "const": 8842.2696511978,
+      "Close": 1.0,
+      "VIX": -659.6479897502318
+    }
+  },
+  "settings": {
+    "max_lags": 5,
+    "case": 3,
+    "ic": "bic",
+    "endog": "S&P 500 close (level)",
+    "exog": "VIX (level)"
+  }
+}

@@ -283,30 +283,35 @@ class TechnicalIndicatorEngine:
         Pure Python implementation of RSI.
         
         RSI = 100 - (100 / (1 + RS))
-        where RS = Average Gain / Average Loss
+        where RS = Average Gain / Average Loss (Wilder smoothing)
+
+        rsi[t] uses prices[0..t] only. The first value is at t = period (the
+        mean of the first `period` changes); earlier rows are NaN, as in
+        TA-Lib. Until 2026-11-24 rows 0..period-1 were filled with a value
+        computed from the first period+1 changes, i.e. from later prices,
+        and the seed change was then counted a second time.
         """
+        prices = np.asarray(prices, dtype=float)
+        rsi = np.full(len(prices), np.nan)
+        if len(prices) <= period:
+            return rsi
+
         deltas = np.diff(prices)
-        seed = deltas[:period+1]
-        up = seed[seed >= 0].sum() / period
-        down = -seed[seed < 0].sum() / period
-        rs = up / down if down != 0 else 0
-        rsi = np.zeros_like(prices)
-        rsi[:period] = 100. - 100. / (1. + rs)
-        
-        for i in range(period, len(prices)):
-            delta = deltas[i-1]
-            if delta > 0:
-                upval = delta
-                downval = 0.
-            else:
-                upval = 0.
-                downval = -delta
-            
-            up = (up * (period - 1) + upval) / period
-            down = (down * (period - 1) + downval) / period
-            rs = up / down if down != 0 else 0
-            rsi[i] = 100. - 100. / (1. + rs)
-        
+        gains = np.clip(deltas, 0.0, None)
+        losses = np.clip(-deltas, 0.0, None)
+
+        def _rsi(up: float, down: float) -> float:
+            if down == 0.0:
+                return 100.0 if up > 0.0 else 50.0
+            return 100.0 - 100.0 / (1.0 + up / down)
+
+        up = gains[:period].mean()
+        down = losses[:period].mean()
+        rsi[period] = _rsi(up, down)
+        for t in range(period + 1, len(prices)):
+            up = (up * (period - 1) + gains[t - 1]) / period
+            down = (down * (period - 1) + losses[t - 1]) / period
+            rsi[t] = _rsi(up, down)
         return rsi
     
     @staticmethod
@@ -574,66 +579,80 @@ class Preprocessor:
     def fit_transform(
         self,
         df: pd.DataFrame,
+        *,
+        fit_rows: int,
         target_col: str = 'Close',
         compute_indicators: bool = True
     ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """
-        Full preprocessing pipeline.
-        
+        Full preprocessing pipeline, fitted on the first `fit_rows` rows only.
+
         Args:
-            df: Raw OHLCV DataFrame.
+            df: Raw OHLCV DataFrame, in time order.
+            fit_rows: Number of leading rows that are TRAINING data. The
+                differencing order and the scaler are estimated on
+                df.iloc[:fit_rows] and then applied to every row. Required
+                and keyword-only: this method used to fit on whatever it was
+                given, and a caller that passed the full dataset leaked the
+                test period's mean and variance into training (audit defect 2).
+                Pass len(df) only when no row of df will be used for testing.
             target_col: Column to test for stationarity (typically 'Close').
             compute_indicators: Whether to compute technical indicators.
-        
+
         Returns:
             Tuple of (processed_df, metadata).
-        
+
         Pipeline Steps:
-            1. Compute technical indicators
-            2. Check stationarity and difference if needed
-            3. Handle missing values (forward-fill)
-            4. Normalize features
+            1. Compute technical indicators (causal)
+            2. Choose the differencing order on the training rows
+            3. Forward-fill gaps; warm-up NaNs become 0 (never back-filled)
+            4. Fit the scaler on the training rows, apply to all rows
+
+        The real pipeline (run_pipeline.py / walk_forward_pipeline.py) does
+        not use this class; it fits its scaler per split with fit_scaler().
         """
+        if not isinstance(fit_rows, (int, np.integer)) or not 0 < fit_rows <= len(df):
+            raise ValueError(f"fit_rows must be an int in 1..{len(df)}, got {fit_rows!r}")
+
         df_processed = df.copy()
-        metadata = {}
-        
+        metadata: Dict[str, Any] = {'fit_rows': int(fit_rows)}
+
         # Step 1: Compute technical indicators
         if compute_indicators:
             df_processed = TechnicalIndicatorEngine.compute_all(df_processed)
-        
-        # Step 2: Stationarity check on target
+
+        # Step 2: Stationarity check on the training rows of the target
         if target_col in df_processed.columns:
             target_series = df_processed[target_col]
-            stationary_target, diff_order = self.diff_transformer.fit_transform(target_series)
-            
+            _, diff_order = self.diff_transformer.fit_transform(target_series.iloc[:fit_rows])
+
             metadata['diff_order'] = diff_order
-            metadata['original_target_last'] = target_series.iloc[-1]
-            
-            # Replace target with differenced version if needed
+            metadata['original_target_last'] = target_series.iloc[fit_rows - 1]
+
             if diff_order > 0:
-                df_processed[f'{target_col}_diff'] = stationary_target
-        
-        # Step 3: Handle missing values
-        df_processed = df_processed.ffill().bfill()
-        
-        # Step 4: Normalization
+                diffed = target_series
+                for _ in range(diff_order):
+                    diffed = diffed.diff()
+                df_processed[f'{target_col}_diff'] = diffed
+
+        # Step 3: Handle missing values without looking ahead
+        df_processed = df_processed.ffill().fillna(0.0)
+
+        # Step 4: Normalization, fitted on the training rows only
         numeric_cols = df_processed.select_dtypes(include=[np.number]).columns.tolist()
         self.feature_names = numeric_cols
-        
-        if self.scaling_method == 'standard':
-            self.scaler = StandardScaler()
-        else:
-            self.scaler = MinMaxScaler()
-        
-        df_processed[numeric_cols] = self.scaler.fit_transform(df_processed[numeric_cols])
-        
+
+        self.scaler = StandardScaler() if self.scaling_method == 'standard' else MinMaxScaler()
+        self.scaler.fit(df_processed[numeric_cols].iloc[:fit_rows])
+        df_processed[numeric_cols] = self.scaler.transform(df_processed[numeric_cols])
+
         metadata['feature_names'] = self.feature_names
         metadata['scaler'] = self.scaler
-        
-        logger.info(f"Preprocessing complete. Shape: {df_processed.shape}")
-        
+
+        logger.info(f"Preprocessing complete. Shape: {df_processed.shape}, fitted on {fit_rows} rows")
+
         return df_processed, metadata
-    
+
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Apply fitted transformations to new data (for inference).
@@ -648,7 +667,7 @@ class Preprocessor:
             raise ValueError("Preprocessor not fitted. Call fit_transform() first.")
         
         df_processed = TechnicalIndicatorEngine.compute_all(df)
-        df_processed = df_processed.ffill().bfill()
+        df_processed = df_processed.ffill().fillna(0.0)
         
         # Apply same normalization
         df_processed[self.feature_names] = self.scaler.transform(df_processed[self.feature_names])
@@ -688,8 +707,7 @@ class Preprocessor:
         elif f'{target_col}_diff' in self.feature_names:
             target_idx = self.feature_names.index(f'{target_col}_diff')
         else:
-            logger.warning(f"Target column {target_col} not in feature_names. Using first column.")
-            target_idx = 0
+            raise ValueError(f"Neither {target_col} nor {target_col}_diff is a fitted column")
         
         # Create array with zeros for other features
         n_features = len(self.feature_names)
@@ -703,8 +721,9 @@ class Preprocessor:
         # Step 2: Inverse difference if needed
         if self.diff_transformer.diff_order > 0:
             if last_actual_value is None:
-                logger.warning("No last_actual_value provided for inverse differencing. Using 0.")
-                last_actual_value = 0.0
+                # Undifferencing from 0 would return a wrong price level that
+                # looks valid, so require the anchor instead of guessing it.
+                raise ValueError("last_actual_value is required to undo differencing")
             
             predictions_original = self.diff_transformer.inverse_transform(
                 pd.Series(predictions_denorm),

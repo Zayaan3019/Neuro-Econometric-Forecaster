@@ -357,8 +357,9 @@ class SentimentFeatureEngineer:
         # Sentiment divergence (current vs moving average)
         df['sentiment_divergence'] = df[sentiment_col] - df['sentiment_ma21']
         
-        # Fill NaN values
-        df = df.fillna(method='bfill')
+        # Fill NaN values without looking ahead (a backward fill would copy
+        # later sentiment into earlier rows)
+        df = df.ffill().fillna(0.0)
         
         logger.info("Added 5 temporal sentiment features")
         

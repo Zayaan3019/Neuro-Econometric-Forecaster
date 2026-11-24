@@ -1,37 +1,109 @@
 {
-  "timestamp": "2026-11-12T19:57:00.450451",
+  "timestamp": "2026-11-24T13:27:46.614321",
+  "held_out_from": "2024-02-07",
   "periods": [
     {
-      "period": "Q1 2024",
+      "period": "2024Q1",
+      "n_samples": 36,
+      "rmse": 0.008188019977480705,
+      "mae": 0.006235833279788494,
+      "directional_accuracy": 47.22222222222222,
+      "first_date": "2024-02-07",
+      "last_date": "2024-03-28"
+    },
+    {
+      "period": "2024Q2",
+      "n_samples": 63,
+      "rmse": 0.007195876105789791,
+      "mae": 0.005900242831557989,
+      "directional_accuracy": 44.44444444444444,
+      "first_date": "2024-04-01",
+      "last_date": "2024-06-28"
+    },
+    {
+      "period": "2024Q3",
+      "n_samples": 64,
+      "rmse": 0.010251390128579972,
+      "mae": 0.007933302782475948,
+      "directional_accuracy": 50.0,
+      "first_date": "2024-07-01",
+      "last_date": "2024-09-30"
+    },
+    {
+      "period": "2024Q4",
+      "n_samples": 64,
+      "rmse": 0.007751641543694726,
+      "mae": 0.00567117054015398,
+      "directional_accuracy": 51.5625,
+      "first_date": "2024-10-01",
+      "last_date": "2024-12-31"
+    },
+    {
+      "period": "2025Q1",
       "n_samples": 60,
-      "rmse": 0.00896073889863049,
-      "mae": 0.007127819582819939,
-      "directional_accuracy": 43.333333333333336
+      "rmse": 0.01020153043307796,
+      "mae": 0.008196794427931309,
+      "directional_accuracy": 46.666666666666664,
+      "first_date": "2025-01-02",
+      "last_date": "2025-03-31"
     },
     {
-      "period": "Q2 2024",
+      "period": "2025Q2",
       "n_samples": 62,
-      "rmse": 0.008119698053881413,
-      "mae": 0.006782284937798977,
-      "directional_accuracy": 43.54838709677419
+      "rmse": 0.01921865153457066,
+      "mae": 0.011216861195862293,
+      "directional_accuracy": 51.61290322580645,
+      "first_date": "2025-04-01",
+      "last_date": "2025-06-30"
     },
     {
-      "period": "Q3 2024",
-      "n_samples": 63,
-      "rmse": 0.010929317705356363,
-      "mae": 0.008804075419902802,
-      "directional_accuracy": 39.682539682539684
+      "period": "2025Q3",
+      "n_samples": 64,
+      "rmse": 0.0062718249124838156,
+      "mae": 0.00479781161993742,
+      "directional_accuracy": 53.125,
+      "first_date": "2025-07-01",
+      "last_date": "2025-09-30"
     },
     {
-      "period": "Q4 2024",
-      "n_samples": 63,
-      "rmse": 0.00856355143460602,
-      "mae": 0.006594882812350988,
-      "directional_accuracy": 44.44444444444444
+      "period": "2025Q4",
+      "n_samples": 64,
+      "rmse": 0.008004267565026788,
+      "mae": 0.006353406235575676,
+      "directional_accuracy": 40.625,
+      "first_date": "2025-10-01",
+      "last_date": "2025-12-31"
+    },
+    {
+      "period": "2026Q1",
+      "n_samples": 61,
+      "rmse": 0.009152932265077018,
+      "mae": 0.0070381988771259785,
+      "directional_accuracy": 45.90163934426229,
+      "first_date": "2026-01-02",
+      "last_date": "2026-03-31"
+    },
+    {
+      "period": "2026Q2",
+      "n_samples": 62,
+      "rmse": 0.008808784824427283,
+      "mae": 0.006863131653517485,
+      "directional_accuracy": 40.32258064516129,
+      "first_date": "2026-04-01",
+      "last_date": "2026-06-30"
+    },
+    {
+      "period": "2026Q3",
+      "n_samples": 26,
+      "rmse": 0.008449740440095393,
+      "mae": 0.006560758221894503,
+      "directional_accuracy": 46.15384615384615,
+      "first_date": "2026-07-01",
+      "last_date": "2026-08-07"
     }
   ],
   "summary": {
-    "avg_directional_accuracy": 42.75217613927291,
-    "std_directional_accuracy": 1.8205861395610443
+    "avg_directional_accuracy": 47.0578911547645,
+    "std_directional_accuracy": 4.072260115189056
   }
 }

@@ -49,7 +49,7 @@ class TestNoLevelVsDifferenceMismatch:
 
         df_ind = TechnicalIndicatorEngine.compute_all(df)
         pre = Preprocessor()
-        processed, meta = pre.fit_transform(df_ind)
+        processed, meta = pre.fit_transform(df_ind, fit_rows=len(df_ind))  # fixture only, no test rows
 
         assert "Close" in processed.columns
         if meta["diff_order"] > 0:

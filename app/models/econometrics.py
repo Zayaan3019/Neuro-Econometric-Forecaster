@@ -1,9 +1,16 @@
 """
 Econometric Models Module (ARDL & Cointegration).
 
-This module implements the "Linear Branch" of the Neuro-Econometric Engine,
-using Autoregressive Distributed Lag (ARDL) models to capture long-term
-equilibrium relationships and linear dynamics in financial time series.
+ARDL estimation and the Pesaran-Shin-Smith bounds test, used as a DIAGNOSTIC
+(is there a long-run level relationship between the index and a macro
+series?). Nothing here feeds the hybrid model: its econometric branch is the
+rolling AR(5) forecast in run_pipeline.precompute_ardl_predictions, and the
+forecasting baseline is ARIMA (app/engine/baselines.py). Reproduce the
+reported bounds test with `python bounds_test_diagnostic.py`.
+
+Failures raise. Nothing in this module substitutes a plausible-looking
+default (a naive forecast, a p-value of 1, an F-statistic of 0) for a
+computation that did not run.
 """
 
 from typing import Tuple, Optional, Dict, Any, Union, List
@@ -196,9 +203,8 @@ class ARDLModel:
             
             logger.info(f"AR({ar_lags}) fallback fitted successfully. AIC: {self.fitted_model_.aic:.2f}")
         
-        except Exception as e:
-            logger.error(f"AR fallback also failed: {str(e)}")
-            raise ValueError("Both ARDL and AR models failed to converge. Check data quality.")
+        except (ValueError, np.linalg.LinAlgError) as e:
+            raise ValueError("Both ARDL and AR models failed to converge. Check data quality.") from e
     
     def predict(
         self,
@@ -224,29 +230,30 @@ class ARDLModel:
             Where Ω_T is the information set at time T.
         
         Raises:
-            RuntimeError: If model not fitted.
+            RuntimeError: If the model is not fitted, or if forecasting fails.
+
+        A failed forecast raises. It used to return the last observed value,
+        which looks like a plausible forecast and hides the failure: the same
+        pattern that made the hybrid's AR branch a naive lag until 2026-11-12.
         """
         if not self.is_fitted:
             raise RuntimeError("Model must be fitted before prediction. Call fit() first.")
-        
+
+        n_obs = len(self.fitted_model_.model.endog)
         try:
             if dynamic:
-                # Dynamic forecast (use predicted values)
                 forecast = self.fitted_model_.forecast(steps=steps, exog=exog)
             else:
-                # Static forecast (requires actual past values)
-                forecast = self.fitted_model_.predict(start=len(self.fitted_model_.model.endog),
-                                                     end=len(self.fitted_model_.model.endog) + steps - 1,
-                                                     exog=exog,
-                                                     dynamic=False)
-            
-            return np.asarray(forecast)
-        
-        except Exception as e:
-            logger.error(f"Prediction failed: {str(e)}")
-            # Return naive forecast (last observed value)
-            last_value = self.fitted_model_.model.endog[-1]
-            return np.full(steps, last_value)
+                forecast = self.fitted_model_.predict(
+                    start=n_obs, end=n_obs + steps - 1, exog=exog, dynamic=False
+                )
+        except (ValueError, np.linalg.LinAlgError) as e:
+            raise RuntimeError(f"ARDL forecast failed: {e}") from e
+
+        forecast = np.asarray(forecast, dtype=float)
+        if forecast.shape != (steps,) or not np.all(np.isfinite(forecast)):
+            raise RuntimeError(f"ARDL forecast is not {steps} finite values: {forecast}")
+        return forecast
     
     def get_coefficients(self) -> Dict[str, float]:
         """
@@ -381,9 +388,9 @@ class CointegrationTester:
             
             return is_cointegrated, p_value, test_stats
         
-        except Exception as e:
-            logger.error(f"Cointegration test failed: {str(e)}")
-            return False, 1.0, {}
+        except (ValueError, np.linalg.LinAlgError) as e:
+            # Raise: (False, 1.0, {}) would read as "tested, not cointegrated".
+            raise RuntimeError(f"Engle-Granger cointegration test could not be computed: {e}") from e
 
 
 class ARDLBoundsTest:
@@ -441,21 +448,21 @@ class ARDLBoundsTest:
         Returns:
             {name: {"order": "I(0)"|"I(1)"|"I(2)+", "adf_level_p": float,
                      "adf_diff_p": float}}
+
+        An ADF test that cannot run raises; it used to be recorded as p = 1.0,
+        which silently classified the series as having a unit root.
         """
         results: Dict[str, Dict[str, Any]] = {}
         for name, s in series_dict.items():
             s = pd.Series(s).dropna()
             try:
-                p_level = adfuller(s, autolag='AIC')[1]
-            except Exception:
-                p_level = 1.0
-            if p_level < significance_level:
-                results[name] = {"order": "I(0)", "adf_level_p": p_level, "adf_diff_p": None}
-                continue
-            try:
-                p_diff = adfuller(s.diff().dropna(), autolag='AIC')[1]
-            except Exception:
-                p_diff = 1.0
+                p_level = float(adfuller(s, autolag='AIC')[1])
+                if p_level < significance_level:
+                    results[name] = {"order": "I(0)", "adf_level_p": p_level, "adf_diff_p": None}
+                    continue
+                p_diff = float(adfuller(s.diff().dropna(), autolag='AIC')[1])
+            except (ValueError, np.linalg.LinAlgError) as e:
+                raise ValueError(f"ADF test failed for '{name}' ({len(s)} observations): {e}") from e
             order = "I(1)" if p_diff < significance_level else "I(2)+"
             results[name] = {"order": order, "adf_level_p": p_level, "adf_diff_p": p_diff}
         return results
@@ -492,7 +499,12 @@ class ARDLBoundsTest:
                 False -- F-stat is below the I(0) lower bound (fail to reject H0)
                 None  -- inconclusive (F-stat falls between the bounds --
                           the correct, honest answer for the PSS test in
-                          that region; do NOT round this to True/False)
+                          that region; do NOT round this to True/False),
+                         or invalid (a series looks I(2); info["valid"] is False)
+
+        Raises:
+            RuntimeError: if the test cannot be computed. It used to return
+                (None, 0.0, {"error": ...}), indistinguishable from a verdict.
         """
         exog_df = exog.to_frame() if isinstance(exog, pd.Series) else pd.DataFrame(exog)
 
@@ -539,15 +551,14 @@ class ARDLBoundsTest:
             # Determine the 5%-significance bound decision. statsmodels
             # indexes `crit_vals` by PERCENTILE (90.0/95.0/99.0/99.9), i.e.
             # 95.0 corresponds to the 5% significance level -- NOT by alpha.
-            try:
-                upper_5pct = crit_vals.loc[95.0, 'upper'] if hasattr(crit_vals, 'loc') else None
-                lower_5pct = crit_vals.loc[95.0, 'lower'] if hasattr(crit_vals, 'loc') else None
-            except Exception:
-                upper_5pct = lower_5pct = None
+            upper_5pct = float(crit_vals.loc[95.0, 'upper'])
+            lower_5pct = float(crit_vals.loc[95.0, 'lower'])
 
-            if upper_5pct is not None and f_stat > upper_5pct:
+            if i2_vars:
+                decision = None  # the test is invalid, so no verdict
+            elif f_stat > upper_5pct:
                 decision = True
-            elif lower_5pct is not None and f_stat < lower_5pct:
+            elif f_stat < lower_5pct:
                 decision = False
             else:
                 decision = None  # inconclusive region -- do not fabricate a verdict
@@ -556,10 +567,7 @@ class ARDLBoundsTest:
             # adjustment (the coefficient on the lagged level of endog in
             # the ECM regression; must be negative & significant for a
             # valid error-correction mechanism).
-            try:
-                long_run_coefs = uecm_res.ci_params.to_dict()
-            except Exception:
-                long_run_coefs = {}
+            long_run_coefs = uecm_res.ci_params.to_dict()
             # UECM's endog is the DIFFERENCED series (e.g. "D.Close"); the
             # error-correction speed-of-adjustment is the coefficient on the
             # own LEVEL lag, i.e. the "<base_name>.L1" parameter.
@@ -579,7 +587,9 @@ class ARDLBoundsTest:
                 "integration_orders": integration,
                 "long_run_coefficients": long_run_coefs,
                 "error_correction_speed": ec_speed,
+                "valid": not i2_vars,
                 "decision_at_5pct": (
+                    f"invalid: {i2_vars} look I(2) or higher" if i2_vars else
                     "reject H0 (long-run relationship)" if decision is True else
                     "fail to reject H0 (no evidence of long-run relationship)" if decision is False else
                     "inconclusive (F-stat between I(0)/I(1) bounds)"
@@ -592,110 +602,7 @@ class ARDLBoundsTest:
             )
             return decision, f_stat, info
 
-        except Exception as e:
-            logger.error(f"Bounds test failed: {str(e)}")
-            return None, 0.0, {"error": str(e)}
-
-
-class EconometricPredictor:
-    """
-    High-level wrapper for econometric forecasting.
-    
-    Provides a unified interface that:
-    1. Automatically handles ARDL fitting with fallback
-    2. Manages prediction and uncertainty quantification
-    3. Integrates with the fusion network
-    """
-    
-    def __init__(self, lags: int = Config.ARDL_LAGS):
-        """
-        Initialize econometric predictor.
-        
-        Args:
-            lags: Number of autoregressive lags.
-        """
-        self.lags = lags
-        self.ardl_model = ARDLModel(lags=lags)
-    
-    def fit_predict(
-        self,
-        target: pd.Series,
-        features: Optional[pd.DataFrame] = None,
-        horizon: int = 1
-    ) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """
-        Fit ARDL and generate predictions in one call.
-        
-        Args:
-            target: Target variable time series.
-            features: Exogenous features (optional).
-            horizon: Forecast horizon (steps ahead).
-        
-        Returns:
-            Tuple of (predictions, diagnostics).
-        
-        This method is designed for integration with the training loop
-        where we need both fitting and prediction in each iteration.
-        """
-        # Fit model
-        self.ardl_model.fit(endog=target, exog=features)
-        
-        # Generate predictions
-        predictions = self.ardl_model.predict(steps=horizon, exog=features)
-        
-        # Get diagnostics
-        diagnostics = self.ardl_model.get_diagnostics()
-        
-        return predictions, diagnostics
-    
-    def rolling_prediction(
-        self,
-        data: pd.DataFrame,
-        target_col: str,
-        feature_cols: Optional[list] = None,
-        window_size: int = 252,
-        horizon: int = 1
-    ) -> pd.Series:
-        """
-        Perform rolling window predictions for backtesting.
-        
-        Args:
-            data: DataFrame with target and features.
-            target_col: Name of target column.
-            feature_cols: List of feature column names.
-            window_size: Size of rolling training window.
-            horizon: Steps ahead to predict.
-        
-        Returns:
-            Series of out-of-sample predictions aligned with data index.
-        
-        Algorithm:
-            For t = window_size to T:
-                1. Train on data[t-window_size:t]
-                2. Predict data[t+horizon]
-                3. Store prediction
-                4. Slide window forward
-        """
-        predictions = []
-        indices = []
-        
-        for i in range(window_size, len(data) - horizon):
-            # Extract training window
-            train_target = data[target_col].iloc[i-window_size:i]
-            
-            if feature_cols:
-                train_features = data[feature_cols].iloc[i-window_size:i]
-            else:
-                train_features = None
-            
-            # Fit and predict
-            try:
-                pred, _ = self.fit_predict(train_target, train_features, horizon)
-                predictions.append(pred[0])
-                indices.append(data.index[i + horizon - 1])
-            except Exception as e:
-                logger.warning(f"Prediction failed at index {i}: {str(e)}")
-                predictions.append(np.nan)
-                indices.append(data.index[i + horizon - 1])
-        
-        return pd.Series(predictions, index=indices, name='ardl_prediction')
+        except (ValueError, np.linalg.LinAlgError, KeyError) as e:
+            # Raise, never return a default: None is the "inconclusive"
+            # verdict, so (None, 0.0) would pass a failure off as a result.
+            raise RuntimeError(f"Bounds test could not be computed: {e}") from e
